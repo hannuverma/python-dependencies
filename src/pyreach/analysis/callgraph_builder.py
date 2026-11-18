@@ -16,7 +16,7 @@ from pyreach.models import (
 )
 
 
-def file_to_module_name(file_path: str, package_name: str) -> str:
+def file_to_module_name(file_path: str, package_name: str, is_dependency: bool = False) -> str:
     """Normalize file path to dotted module name."""
     p = PurePosixPath(file_path.replace("\\", "/"))
     parts = list(p.parts)
@@ -26,6 +26,8 @@ def file_to_module_name(file_path: str, package_name: str) -> str:
         parts[-1] = parts[-1][:-3]
     if parts and parts[-1] == "__init__":
         parts = parts[:-1]
+    if is_dependency and len(parts) >= 2:
+        return ".".join(parts)
     norm_pkg = canonicalize_name(package_name).replace("-", "_")
     if parts and canonicalize_name(parts[0]).replace("-", "_") == norm_pkg:
         return ".".join(parts)
@@ -65,7 +67,7 @@ class CallGraphBuilder:
             files_failed = 0
 
             for rel_path, code in sources.items():
-                mod_name = file_to_module_name(rel_path, norm_pkg)
+                mod_name = file_to_module_name(rel_path, norm_pkg, is_dependency=is_dep)
                 try:
                     tree_module = ast.parse(code)
                     imports = extract_module_imports(tree_module, mod_name)

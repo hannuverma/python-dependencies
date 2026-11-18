@@ -61,13 +61,22 @@ class HTTPPyPIClient:
         if not urls:
             raise RuntimeError(f"PyPI release not found for {package}=={version}")
 
-        # Filter by preference: wheels first, then sdists
+        # Filter by preference: pure Python wheels first, then any wheel (independent of host ABI), then sdist
         chosen_url: dict[str, Any] | None = None
         if prefer_wheel:
+            # 1. Prioritize pure-python universal wheel if present
             for u in urls:
-                if u.get("packagetype") == "bdist_wheel":
+                fn = str(u.get("filename", "")).lower()
+                if u.get("packagetype") == "bdist_wheel" and "none-any.whl" in fn:
                     chosen_url = u
                     break
+            # 2. Accept any bdist_wheel for source extraction (does not depend on local Python version tag)
+            if not chosen_url:
+                for u in urls:
+                    if u.get("packagetype") == "bdist_wheel":
+                        chosen_url = u
+                        break
+        # 3. Fall back to sdist
         if not chosen_url:
             for u in urls:
                 if u.get("packagetype") == "sdist":

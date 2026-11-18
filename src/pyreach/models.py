@@ -240,6 +240,10 @@ class CallGraphNode(BaseModel):
         default=False,
         description="True if this node contains unresolved dynamic invocations (getattr, eval, etc.)",
     )
+    is_native: bool = Field(
+        default=False,
+        description="True if this node resides in a compiled native extension (.so/.pyd)",
+    )
 
 
 class CallGraphEdge(BaseModel):
@@ -312,6 +316,10 @@ class CallGraph(BaseModel):
         default_factory=dict,
         description="Per-package AST parse tracking metrics",
     )
+    native_modules: set[str] = Field(
+        default_factory=set,
+        description="Set of dotted module names that are compiled native extensions (.so/.pyd)",
+    )
 
     def add_node(self, node: CallGraphNode) -> None:
         self.nodes[node.node_id] = node
@@ -335,6 +343,7 @@ class CallGraph(BaseModel):
                 is_dependency=old_node.is_dependency,
                 is_entry_point=True,
                 has_dynamic_call=old_node.has_dynamic_call,
+                is_native=old_node.is_native,
             )
 
     def record_framework_status(self, framework: str, completed: bool, discovered_count: int = 0) -> None:

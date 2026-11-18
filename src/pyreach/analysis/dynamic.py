@@ -265,13 +265,30 @@ class DynamicFeatureClassifier(ast.NodeVisitor):
 class NamespaceTouchAuditor:
     """Audits whether an unresolved dynamic site touches a target package's namespace per docs/architecture.md."""
 
-    @staticmethod
-    def touches_namespace(site: DynamicSite, target_package: str) -> tuple[bool, str]:
+    @classmethod
+    def touches_namespace(
+        cls,
+        site: DynamicSite,
+        target_package: str,
+        target_modules: set[str] | None = None,
+    ) -> tuple[bool, str]:
         """Check Conditions A, B, and C for target_package.
 
         Returns (True, reason) if site touches the namespace, else (False, "").
         """
         norm_target = canonicalize_name(target_package)
+        all_targets = {norm_target, norm_target.replace("-", "_")}
+        if target_modules:
+            all_targets.update(canonicalize_name(m) for m in target_modules)
+            all_targets.update(m.lower().replace("-", "_") for m in target_modules)
+        well_known = {
+            "pillow": {"pil"},
+            "pyyaml": {"yaml"},
+            "beautifulsoup4": {"bs4"},
+            "scikit-learn": {"sklearn"},
+        }
+        if norm_target in well_known:
+            all_targets.update(well_known[norm_target])
 
         # If site was cleanly resolved to a constant safe target, it doesn't cause uncertainty
         if site.is_constant and site.category not in (
@@ -282,7 +299,7 @@ class NamespaceTouchAuditor:
         # 0. Monkey patching check (specifically targets receiver package)
         if site.category == UncertaintyCategory.MONKEY_PATCH and site.receiver_expr:
             norm_rec = canonicalize_name(site.receiver_expr.split(".")[0])
-            if norm_rec == norm_target or norm_target in site.receiver_expr.lower():
+            if norm_rec in all_targets or any(t in site.receiver_expr.lower() for t in all_targets):
                 return (
                     True,
                     f"Monkey patching detected targeting package '{target_package}': "
@@ -294,7 +311,7 @@ class NamespaceTouchAuditor:
         # Condition A: Import or Re-export Scope Reachability
         # -------------------------------------------------------------------
         # A1: Target package is imported in the same file/scope
-        if norm_target in site.imported_packages_in_scope:
+        if any(t in site.imported_packages_in_scope for t in all_targets):
             return (
                 True,
                 f"Condition A triggered: Package '{target_package}' is imported in module "
@@ -315,7 +332,7 @@ class NamespaceTouchAuditor:
         # Receiver explicitly names or references target package
         if site.receiver_expr:
             norm_rec = canonicalize_name(site.receiver_expr.split(".")[0])
-            if norm_rec == norm_target or norm_target in site.receiver_expr.lower():
+            if norm_rec in all_targets or any(t in site.receiver_expr.lower() for t in all_targets):
                 return (
                     True,
                     f"Condition B triggered: Receiver '{site.receiver_expr}' originates from "
@@ -327,21 +344,13 @@ class NamespaceTouchAuditor:
         # -------------------------------------------------------------------
         if site.category == UncertaintyCategory.GETATTR_NON_CONSTANT:
             if site.receiver_expr and (
-                norm_target in site.receiver_expr.lower() or site.receiver_expr in site.imported_packages_in_scope
+                any(t in site.receiver_expr.lower() for t in all_targets)
+                or site.receiver_expr in site.imported_packages_in_scope
             ):
                 return (
                     True,
                     f"Condition C triggered: Non-constant getattr on receiver '{site.receiver_expr}' "
                     f"touching '{target_package}' namespace with attribute '{site.attribute_expr}'.",
-                )
-
-        # Monkey patching specifically targeting target package
-        if site.category == UncertaintyCategory.MONKEY_PATCH and site.receiver_expr:
-            if norm_target in site.receiver_expr.lower() or site.receiver_expr.split(".")[0] in site.imported_packages_in_scope:
-                return (
-                    True,
-                    f"Monkey patching detected targeting package '{target_package}': "
-                    f"{site.receiver_expr}.{site.attribute_expr}",
                 )
 
         # Plugin loading via entry_points() touches any installed package providing plugins
@@ -354,7 +363,7 @@ class NamespaceTouchAuditor:
 
         # Untrusted deserialization or eval/exec in scope importing target package
         if site.category in (UncertaintyCategory.EVAL_EXEC, UncertaintyCategory.DESERIALIZATION):
-            if norm_target in site.imported_packages_in_scope:
+            if any(t in site.imported_packages_in_scope for t in all_targets):
                 return (
                     True,
                     f"Dynamic code execution/deserialization '{site.category.value}' in scope "
@@ -369,11 +378,12 @@ class NamespaceTouchAuditor:
         cls,
         sites: list[DynamicSite],
         target_package: str,
+        target_modules: set[str] | None = None,
     ) -> list[UncertaintyReason]:
         """Audit all dynamic sites and return UncertaintyReasons for those touching target_package."""
         reasons: list[UncertaintyReason] = []
         for s in sites:
-            touches, explanation = cls.touches_namespace(s, target_package)
+            touches, explanation = cls.touches_namespace(s, target_package, target_modules=target_modules)
             if touches:
                 reasons.append(
                     UncertaintyReason(

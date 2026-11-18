@@ -93,10 +93,21 @@ class EntryPointDetector:
                 if isinstance(node, ast.If):
                     if self._is_main_guard(node.test):
                         main_discovered += 1
-                        mod_node_id = f"{mod_name}:<module>"
+                        mod_node_id = f"{mod_name}:<module_init>"
                         call_graph.add_entry_point(
                             EntryPoint(
                                 symbol_id=mod_node_id,
+                                entry_type=EntryPointType.MAIN,
+                                file_path=file_path,
+                                line_number=node.lineno,
+                                confidence=ConfidenceLevel.HIGH,
+                                description="Execution guard: if __name__ == '__main__'",
+                            )
+                        )
+                        # Also register alias <module>
+                        call_graph.add_entry_point(
+                            EntryPoint(
+                                symbol_id=f"{mod_name}:<module>",
                                 entry_type=EntryPointType.MAIN,
                                 file_path=file_path,
                                 line_number=node.lineno,

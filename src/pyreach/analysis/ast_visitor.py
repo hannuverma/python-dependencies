@@ -51,23 +51,76 @@ class ModuleCallGraphVisitor(ast.NodeVisitor):
         # Local variable type inference: var_name -> class_type_name
         self.local_var_types: dict[str, str] = {}
 
-        # Create module-level top-level node
-        mod_node_id = f"{module_name}:<module>"
-        self.nodes[mod_node_id] = CallGraphNode(
+        # Create module-level top-level node (<module_init> / <module>)
+        mod_node_id = f"{module_name}:<module_init>"
+        mod_node = CallGraphNode(
             node_id=mod_node_id,
             package=self.package_name,
             module=self.module_name,
-            name="<module>",
+            name="<module_init>",
             qualified_name=self.module_name,
             file_path=self.file_path,
             line_number=1,
             is_dependency=self.is_dependency,
             is_entry_point=not self.is_dependency,
         )
+        self.nodes[mod_node_id] = mod_node
+        self.nodes[f"{module_name}:<module>"] = mod_node
         self.current_caller_id = mod_node_id
 
     def _get_current_caller(self) -> str:
-        return self.scope_stack[-1] if self.scope_stack else f"{self.module_name}:<module>"
+        return self.scope_stack[-1] if self.scope_stack else f"{self.module_name}:<module_init>"
+
+    def visit_Import(self, node: ast.Import) -> None:
+        caller_id = self._get_current_caller()
+        for alias in node.names:
+            mod_target = alias.name
+            callee_id = f"{mod_target}:<module_init>"
+            self.edges.append(
+                CallGraphEdge(
+                    caller_id=caller_id,
+                    callee_id=callee_id,
+                    call_site_file=self.file_path,
+                    call_site_line=node.lineno,
+                    call_type="import",
+                    confidence=ConfidenceLevel.HIGH,
+                )
+            )
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        caller_id = self._get_current_caller()
+        level = node.level or 0
+        if level > 0:
+            from pyreach.analysis.imports import resolve_relative_import
+            base_mod = resolve_relative_import(self.module_name, level, node.module)
+        else:
+            base_mod = node.module or ""
+
+        if base_mod:
+            self.edges.append(
+                CallGraphEdge(
+                    caller_id=caller_id,
+                    callee_id=f"{base_mod}:<module_init>",
+                    call_site_file=self.file_path,
+                    call_site_line=node.lineno,
+                    call_type="import",
+                    confidence=ConfidenceLevel.HIGH,
+                )
+            )
+        for alias in node.names:
+            submod = f"{base_mod}.{alias.name}" if base_mod else alias.name
+            self.edges.append(
+                CallGraphEdge(
+                    caller_id=caller_id,
+                    callee_id=f"{submod}:<module_init>",
+                    call_site_file=self.file_path,
+                    call_site_line=node.lineno,
+                    call_type="import",
+                    confidence=ConfidenceLevel.HIGH,
+                )
+            )
+        self.generic_visit(node)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         bases: list[str] = []
@@ -77,10 +130,15 @@ class ModuleCallGraphVisitor(ast.NodeVisitor):
             elif isinstance(b, ast.Attribute) and isinstance(b.value, ast.Name):
                 bases.append(f"{b.value.id}.{b.attr}")
 
-        class_info = ClassHierarchyInfo(name=node.name, module=self.module_name, bases=bases)
+        if node.name in self.all_classes:
+            class_info = self.all_classes[node.name]
+        elif f"{self.module_name}.{node.name}" in self.all_classes:
+            class_info = self.all_classes[f"{self.module_name}.{node.name}"]
+        else:
+            class_info = ClassHierarchyInfo(name=node.name, module=self.module_name, bases=bases)
+            self.all_classes[f"{self.module_name}.{node.name}"] = class_info
+            self.all_classes[node.name] = class_info
         self.classes[node.name] = class_info
-        self.all_classes[f"{self.module_name}.{node.name}"] = class_info
-        self.all_classes[node.name] = class_info
 
         node_id = f"{self.module_name}:{node.name}"
         self.nodes[node_id] = CallGraphNode(
@@ -100,7 +158,11 @@ class ModuleCallGraphVisitor(ast.NodeVisitor):
 
     def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         parent_id = self._get_current_caller()
-        parent_is_class = ":" in parent_id and not parent_id.endswith("<module>") and "." not in parent_id.split(":")[-1]
+        parent_is_class = (
+            ":" in parent_id
+            and not (parent_id.endswith("<module>") or parent_id.endswith("<module_init>"))
+            and "." not in parent_id.split(":")[-1]
+        )
 
         if parent_is_class:
             class_name = parent_id.split(":")[-1]
@@ -231,12 +293,24 @@ class ModuleCallGraphVisitor(ast.NodeVisitor):
 
         return None
 
+    def _expr_to_dotted_name(self, expr: ast.expr) -> str | None:
+        """Convert a Name or chained Attribute expression into a dotted name string."""
+        parts: list[str] = []
+        curr = expr
+        while isinstance(curr, ast.Attribute):
+            parts.append(curr.attr)
+            curr = curr.value
+        if isinstance(curr, ast.Name):
+            parts.append(curr.id)
+            return ".".join(reversed(parts))
+        return None
+
     def _resolve_attribute_call(self, receiver: ast.expr, attr_name: str) -> list[str]:
         """Resolve obj.attr() using local type inference or Class Hierarchy Analysis (CHA)."""
-        # A. Receiver is a Name: obj.attr()
-        if isinstance(receiver, ast.Name):
-            obj_name = receiver.id
+        obj_name = self._expr_to_dotted_name(receiver)
 
+        # A. Receiver is a Name or Dotted Attribute chain: obj.attr()
+        if obj_name:
             # Case A0: Receiver is 'self' -> look up in enclosing class and base classes
             if obj_name == "self":
                 # Find enclosing class in scope_stack
@@ -254,7 +328,7 @@ class ModuleCallGraphVisitor(ast.NodeVisitor):
                             if base_info and attr_name in base_info.methods:
                                 return [f"{base_info.module}:{base_info.name}.{attr_name}"]
 
-            # Case A1: Receiver is an imported module name: urllib3.util.parse_url()
+            # Case A1: Receiver is directly an imported module or alias: urllib3.util.parse_url()
             if obj_name in self.imports.alias_map:
                 imp = self.imports.alias_map[obj_name]
                 if imp.symbol_name is None:
@@ -262,10 +336,23 @@ class ModuleCallGraphVisitor(ast.NodeVisitor):
                     target_module = imp.source_module
                     return [f"{target_module}:{attr_name}"]
                 else:
-                    # receiver is an imported class or object
+                    # receiver could be an imported submodule (from PIL import ImageMath -> ImageMath.eval)
+                    # or an imported class/object (from mymod import MyClass -> MyClass.method)
                     target_module = imp.source_module
                     target_class = imp.symbol_name
-                    return [f"{target_module}:{target_class}.{attr_name}"]
+                    submodule_target = f"{target_module}.{target_class}:{attr_name}"
+                    class_target = f"{target_module}:{target_class}.{attr_name}"
+                    return [submodule_target, class_target]
+
+            # Case A1b: Dotted prefix matches an imported module or alias:
+            # e.g. 'import urllib3; urllib3.util.url.parse_url()'
+            parts = obj_name.split(".")
+            if len(parts) > 1 and parts[0] in self.imports.alias_map:
+                imp = self.imports.alias_map[parts[0]]
+                base_mod = f"{imp.source_module}.{imp.symbol_name}" if imp.symbol_name else imp.source_module
+                sub_path = ".".join(parts[1:])
+                resolved_mod = f"{base_mod}.{sub_path}"
+                return [f"{resolved_mod}:{attr_name}"]
 
             # Case A2: Receiver has inferred local type: client = PoolManager(); client.urlopen()
             if obj_name in self.local_var_types:

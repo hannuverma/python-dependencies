@@ -148,6 +148,36 @@ class VerdictEngine:
                     reached_symbol = sym
 
         if best_path is not None and reached_symbol is not None:
+            # Check if call path passes through a native module
+            native_hops = [
+                h for h in best_path
+                if any(
+                    node.module in self.call_graph.native_modules or node.is_native
+                    for node_id, node in self.call_graph.nodes.items()
+                    if node.qualified_name == h.symbol or node.node_id == h.symbol
+                )
+            ]
+            if native_hops:
+                c_path_reason = UncertaintyReason(
+                    category=UncertaintyCategory.OTHER,
+                    location=f"{native_hops[0].file_path}:{native_hops[0].line_number}",
+                    details=(
+                        f"Call path to '{reached_symbol.qualified_name}' passes through a compiled "
+                        f"native extension node ({native_hops[0].symbol}); reachability cannot be proven statically."
+                    ),
+                )
+                return Finding(
+                    advisory_id=advisory.id,
+                    package_name=pkg_norm,
+                    installed_version=installed_version,
+                    verdict=Verdict.UNCERTAIN,
+                    confidence=ConfidenceLevel.HIGH,
+                    affected_symbols=[reached_symbol],
+                    uncertainty_reasons=[c_path_reason],
+                    call_path=best_path,
+                    summary=f"Call path to {reached_symbol.qualified_name} passes through a compiled native extension.",
+                )
+
             return Finding(
                 advisory_id=advisory.id,
                 package_name=pkg_norm,
@@ -162,8 +192,13 @@ class VerdictEngine:
         # -------------------------------------------------------------------
         # Step 5: Dynamic Site Namespace Touch Auditing
         # -------------------------------------------------------------------
+        target_mods = {
+            node.module.split(".")[0].lower()
+            for node in self.call_graph.nodes.values()
+            if canonicalize_name(node.package) == pkg_norm
+        }
         touching_reasons = NamespaceTouchAuditor.audit_dynamic_sites_for_alert(
-            self.dynamic_sites, advisory.package_name
+            self.dynamic_sites, advisory.package_name, target_modules=target_mods
         )
         if touching_reasons:
             return Finding(
@@ -183,7 +218,63 @@ class VerdictEngine:
         # -------------------------------------------------------------------
         # Step 6: Sound Proof of NOT_REACHABLE
         # -------------------------------------------------------------------
-        # Rule: If ANY affected symbol was derived from LLM fallback, NOT_REACHABLE is forbidden!
+        # Rule 6a: If ANY affected symbol resides in a compiled native extension (.so/.pyd),
+        # AST analysis cannot inspect it; unreachability cannot be proven!
+        is_native_symbol = any(
+            sym.module in self.call_graph.native_modules
+            for sym in advisory.extracted_symbols
+        )
+        if is_native_symbol:
+            c_sym_reason = UncertaintyReason(
+                category=UncertaintyCategory.OTHER,
+                location=f"advisory:{advisory.id}",
+                details=(
+                    f"Affected symbol in '{advisory.package_name}' is implemented in a compiled "
+                    "native extension (.so/.pyd); unreachability cannot be proven with AST."
+                ),
+            )
+            return Finding(
+                advisory_id=advisory.id,
+                package_name=pkg_norm,
+                installed_version=installed_version,
+                verdict=Verdict.UNCERTAIN,
+                confidence=ConfidenceLevel.HIGH,
+                affected_symbols=advisory.extracted_symbols,
+                uncertainty_reasons=[c_sym_reason],
+                summary="Affected symbol lives in compiled native code; cannot prove unreachability.",
+            )
+
+        # Rule 6b: If the project calls into a native module in the target package,
+        # that native module is a black box that could call the vulnerable code internally!
+        project_calls_target_native = any(
+            (e.caller_id in self.call_graph.nodes and not self.call_graph.nodes[e.caller_id].is_dependency)
+            and any(
+                n.package == pkg_norm and (n.module in self.call_graph.native_modules or n.is_native)
+                for n in [self.call_graph.nodes.get(e.callee_id)] if n
+            )
+            for e in self.call_graph.edges
+        )
+        if project_calls_target_native:
+            c_call_reason = UncertaintyReason(
+                category=UncertaintyCategory.OTHER,
+                location=f"package:{pkg_norm}",
+                details=(
+                    f"Project calls directly into compiled native extension in '{advisory.package_name}'; "
+                    "native control flow cannot be traversed with AST, preventing proof of unreachability."
+                ),
+            )
+            return Finding(
+                advisory_id=advisory.id,
+                package_name=pkg_norm,
+                installed_version=installed_version,
+                verdict=Verdict.UNCERTAIN,
+                confidence=ConfidenceLevel.HIGH,
+                affected_symbols=advisory.extracted_symbols,
+                uncertainty_reasons=[c_call_reason],
+                summary="Project calls into compiled native extension of target package.",
+            )
+
+        # Rule 6c: If ANY affected symbol was derived from LLM fallback, NOT_REACHABLE is forbidden!
         has_llm_symbol = any(
             sym.source_of_evidence == SymbolEvidenceSource.LLM_FALLBACK
             for sym in advisory.extracted_symbols
