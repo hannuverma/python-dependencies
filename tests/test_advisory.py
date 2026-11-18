@@ -1,6 +1,7 @@
-"""Unit tests for Stage 2: Advisory ingestion, diff parsing, and symbol extraction."""
+"""Unit tests for Stage 2: Advisory ingestion, diff parsing, and symbol extraction with REAL fixtures."""
 
 import json
+from pathlib import Path
 
 from pyreach.advisory.commit_miner import CommitMiner
 from pyreach.advisory.diff_parser import parse_unified_diff
@@ -14,237 +15,118 @@ from pyreach.models import (
     SymbolType,
 )
 
-# ---------------------------------------------------------------------------
-# Real Advisory Fixture 1: GHSA-r64q-w8jr-g9qp (urllib3: parse_url ReDoS)
-# ---------------------------------------------------------------------------
-URLLIB3_OSV_JSON = {
-    "id": "GHSA-r64q-w8jr-g9qp",
-    "aliases": ["CVE-2021-33503"],
-    "summary": "Catastrophic backtracking in URL parsing regex",
-    "details": "urllib3 before 1.26.5 contains a regex ReDoS in parse_url.",
-    "affected": [
-        {
-            "package": {"name": "urllib3", "ecosystem": "PyPI"},
-            "ranges": [
-                {
-                    "type": "ECOSYSTEM",
-                    "events": [{"introduced": "0"}, {"fixed": "1.26.5"}],
-                }
-            ],
-        }
-    ],
-    "references": [
-        {"type": "FIX", "url": "https://github.com/urllib3/urllib3/commit/2d4a89f64b433356e350620a539026abb4f0f15e"}
-    ],
-}
-
-URLLIB3_PRE_FIX_URL_PY = '''"""URL helper functions for urllib3."""
-import re
-
-SUBAUTHORITY_PAT = r"^([^@]+@)?"
-
-def parse_url(url):
-    """Parse a given url into its components."""
-    if not url:
-        return None
-    # Vulnerable catastrophic regex
-    match = re.match(SUBAUTHORITY_PAT, url)
-    return match
-
-def get_host(url):
-    """Extract host."""
-    return "example.com"
-'''
-
-URLLIB3_DIFF = """diff --git a/src/urllib3/util/url.py b/src/urllib3/util/url.py
-index a1b2c3d..e4f5g6h 100644
---- a/src/urllib3/util/url.py
-+++ b/src/urllib3/util/url.py
-@@ -10,3 +10,3 @@ def parse_url(url):
-     # Vulnerable catastrophic regex
--    match = re.match(SUBAUTHORITY_PAT, url)
-+    match = re.match(r"^safe", url)
-     return match
-diff --git a/test/test_url.py b/test/test_url.py
-index 1111..2222 100644
---- a/test/test_url.py
-+++ b/test/test_url.py
-@@ -1,2 +1,3 @@
- def test_parse():
-+    pass
-"""
-
-# ---------------------------------------------------------------------------
-# Real Advisory Fixture 2: GHSA-m58g-v84x-8972 (jinja2: is_internal_attribute)
-# ---------------------------------------------------------------------------
-JINJA2_OSV_JSON = {
-    "id": "GHSA-m58g-v84x-8972",
-    "aliases": ["CVE-2020-28493"],
-    "summary": "Sandbox breakout via string format internal attributes",
-    "affected": [
-        {
-            "package": {"name": "jinja2", "ecosystem": "PyPI"},
-            "ranges": [
-                {
-                    "type": "ECOSYSTEM",
-                    "events": [{"introduced": "0"}, {"fixed": "2.11.3"}],
-                }
-            ],
-        }
-    ],
-    "references": [
-        {"type": "FIX", "url": "https://github.com/pallets/jinja/commit/a6c278972e3914a27a5796068eb1a1be2eec4c39"}
-    ],
-}
-
-JINJA2_PRE_FIX_SANDBOX_PY = '''"""Jinja sandbox implementation."""
-
-class SandboxedEnvironment:
-    def __init__(self):
-        pass
-
-    def is_safe_attribute(self, obj, attr, value):
-        return True
-
-def is_internal_attribute(obj, attr):
-    """Check if attribute is private."""
-    if attr.startswith("_"):
-        return True
-    return False
-'''
-
-JINJA2_DIFF = """diff --git a/src/jinja2/sandbox.py b/src/jinja2/sandbox.py
-index 1234..5678 100644
---- a/src/jinja2/sandbox.py
-+++ b/src/jinja2/sandbox.py
-@@ -12,2 +12,4 @@ def is_internal_attribute(obj, attr):
-     if attr.startswith("_"):
-+        return True
-+    if attr == "format":
-         return True
-"""
-
-# ---------------------------------------------------------------------------
-# Real Advisory Fixture 3: GHSA-wqvq-5pcm-5x3q (pillow: Path.py _path)
-# ---------------------------------------------------------------------------
-PILLOW_OSV_JSON = {
-    "id": "GHSA-wqvq-5pcm-5x3q",
-    "aliases": ["CVE-2022-24303"],
-    "summary": "Pillow temporary file path vulnerability",
-    "affected": [
-        {
-            "package": {"name": "pillow", "ecosystem": "PyPI"},
-            "ranges": [
-                {
-                    "type": "ECOSYSTEM",
-                    "events": [{"introduced": "0"}, {"fixed": "9.0.1"}],
-                }
-            ],
-        }
-    ],
-    "references": [
-        {"type": "FIX", "url": "https://github.com/python-pillow/Pillow/commit/40775d7105a5b512534a6fb70d29792ee5a2a901"}
-    ],
-}
-
-PILLOW_PRE_FIX_PATH_PY = '''"""Pillow Path helper."""
-
-def _path(path):
-    """Normalize path."""
-    import tempfile
-    return tempfile.mktemp()
-'''
-
-PILLOW_DIFF = """diff --git a/src/PIL/Path.py b/src/PIL/Path.py
-index aaaa..bbbb 100644
---- a/src/PIL/Path.py
-+++ b/src/PIL/Path.py
-@@ -4,2 +4,2 @@ def _path(path):
--    import tempfile
--    return tempfile.mktemp()
-+    import tempfile
-+    return tempfile.NamedTemporaryFile().name
-"""
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
 def test_osv_json_ingestion() -> None:
-    adv = parse_osv_json(URLLIB3_OSV_JSON)
-    assert adv.id == "GHSA-r64q-w8jr-g9qp"
+    """Verify ingestion of real OSV record for urllib3 CVE-2021-33503."""
+    osv_path = FIXTURES_DIR / "advisories" / "urllib3_GHSA-q2q7-5pp4-w6pg.json"
+    osv_data = json.loads(osv_path.read_text(encoding="utf-8"))
+    adv = parse_osv_json(osv_data)
+
+    assert adv.id == "GHSA-q2q7-5pp4-w6pg"
     assert "CVE-2021-33503" in adv.aliases
     assert adv.package_name == "urllib3"
     assert "1.26.5" in adv.fixed_versions
-    assert len(adv.fix_commits) == 1
+    assert "https://github.com/urllib3/urllib3/commit/2d4a3fee6de2fa45eb82169361918f759269b4ec" in adv.fix_commits
 
 
 def test_diff_parser_filters_non_code() -> None:
-    file_diffs = parse_unified_diff(URLLIB3_DIFF)
-    # test/test_url.py must be filtered out! Only src/urllib3/util/url.py should remain
+    """Verify unified diff parser filters test files and keeps code files from real patch."""
+    diff_text = (FIXTURES_DIR / "diffs" / "urllib3_2d4a3fee.patch").read_text(encoding="utf-8")
+    file_diffs = parse_unified_diff(diff_text)
+
+    # test/test_util.py must be filtered out! Only src/urllib3/util/url.py should remain
     assert len(file_diffs) == 1
-    assert file_diffs[0].old_path == "src/urllib3/util/url.py"
-    assert len(file_diffs[0].hunks) == 1
-    assert 11 in file_diffs[0].hunks[0].changed_pre_lines
+    assert file_diffs[0].new_path == "src/urllib3/util/url.py"
+    # The real patch has 2 hunks in src/urllib3/util/url.py
+    assert len(file_diffs[0].hunks) == 2
 
 
 def test_real_advisory_urllib3_symbol_extraction() -> None:
-    """Verify extracted function for urllib3 GHSA-r64q-w8jr-g9qp is parse_url."""
-    commit_url = "https://github.com/urllib3/urllib3/commit/2d4a89f64b433356e350620a539026abb4f0f15e"
+    """Verify extracted symbols for urllib3 GHSA-q2q7-5pp4-w6pg (CVE-2021-33503)."""
+    commit_url = "https://github.com/urllib3/urllib3/commit/2d4a3fee6de2fa45eb82169361918f759269b4ec"
+    diff_text = (FIXTURES_DIR / "diffs" / "urllib3_2d4a3fee.patch").read_text(encoding="utf-8")
+    pre_fix_src = (FIXTURES_DIR / "sources" / "urllib3_url_pre.py").read_text(encoding="utf-8")
+    osv_data = json.loads((FIXTURES_DIR / "advisories" / "urllib3_GHSA-q2q7-5pp4-w6pg.json").read_text(encoding="utf-8"))
+
     vcs = MockVCSClient(
-        diffs={commit_url: URLLIB3_DIFF},
-        files={(commit_url, "src/urllib3/util/url.py", True): URLLIB3_PRE_FIX_URL_PY},
+        diffs={commit_url: diff_text},
+        files={(commit_url, "src/urllib3/util/url.py", True): pre_fix_src},
     )
     resolver = AdvisorySymbolResolver(vcs_client=vcs)
-    adv = parse_osv_json(URLLIB3_OSV_JSON)
+    adv = parse_osv_json(osv_data)
 
     symbols = resolver.resolve(adv)
-    assert len(symbols) == 1
-    sym = symbols[0]
-    assert sym.package == "urllib3"
-    assert sym.module == "urllib3.util.url"
-    assert sym.qualified_name == "urllib3.util.url.parse_url"
-    assert sym.symbol_type == SymbolType.FUNCTION
-    assert sym.confidence == ConfidenceLevel.HIGH
-    assert sym.source_of_evidence == SymbolEvidenceSource.FIX_COMMIT_DIFF
-    assert sym.file_path == "src/urllib3/util/url.py"
-    assert sym.diff_hunk is not None
-    assert "re.match(SUBAUTHORITY_PAT, url)" in sym.diff_hunk
+    # Real commit changed module-level regexes AND lines within parse_url
+    qnames = {s.qualified_name: s for s in symbols}
+    assert "urllib3.util.url" in qnames
+    assert "urllib3.util.url.parse_url" in qnames
+
+    parse_url_sym = qnames["urllib3.util.url.parse_url"]
+    assert parse_url_sym.package == "urllib3"
+    assert parse_url_sym.module == "urllib3.util.url"
+    assert parse_url_sym.symbol_type == SymbolType.FUNCTION
+    assert parse_url_sym.confidence == ConfidenceLevel.HIGH
+    assert parse_url_sym.source_of_evidence == SymbolEvidenceSource.FIX_COMMIT_DIFF
+
+    mod_sym = qnames["urllib3.util.url"]
+    assert mod_sym.symbol_type == SymbolType.MODULE
+    assert mod_sym.confidence == ConfidenceLevel.MEDIUM
 
 
 def test_real_advisory_jinja2_symbol_extraction() -> None:
-    """Verify extracted function for jinja2 GHSA-m58g-v84x-8972 is is_internal_attribute."""
-    commit_url = "https://github.com/pallets/jinja/commit/a6c278972e3914a27a5796068eb1a1be2eec4c39"
+    """Verify extracted symbols for jinja2 GHSA-h75v-3vvj-5mfj (CVE-2024-34064)."""
+    commit_url = "https://github.com/pallets/jinja/commit/0668239dc6b44ef38e7a6c9f91f312fd4ca581cb"
+    diff_text = (FIXTURES_DIR / "diffs" / "jinja2_0668239d.patch").read_text(encoding="utf-8")
+    pre_fix_src = (FIXTURES_DIR / "sources" / "jinja2_filters_pre.py").read_text(encoding="utf-8")
+    osv_data = json.loads((FIXTURES_DIR / "advisories" / "jinja2_GHSA-h75v-3vvj-5mfj.json").read_text(encoding="utf-8"))
+
     vcs = MockVCSClient(
-        diffs={commit_url: JINJA2_DIFF},
-        files={(commit_url, "src/jinja2/sandbox.py", True): JINJA2_PRE_FIX_SANDBOX_PY},
+        diffs={commit_url: diff_text},
+        files={(commit_url, "src/jinja2/filters.py", True): pre_fix_src},
     )
     resolver = AdvisorySymbolResolver(vcs_client=vcs)
-    adv = parse_osv_json(JINJA2_OSV_JSON)
+    adv = parse_osv_json(osv_data)
 
     symbols = resolver.resolve(adv)
-    assert len(symbols) == 1
-    sym = symbols[0]
-    assert sym.package == "jinja2"
-    assert sym.module == "jinja2.sandbox"
-    assert sym.qualified_name == "jinja2.sandbox.is_internal_attribute"
-    assert sym.symbol_type == SymbolType.FUNCTION
-    assert sym.confidence == ConfidenceLevel.HIGH
+    qnames = {s.qualified_name: s for s in symbols}
+    # CHANGES.rst and tests/test_filters.py were filtered out.
+    # src/jinja2/filters.py changes _attr_key_re at module level and do_xmlattr function.
+    assert "jinja2.filters" in qnames
+    assert "jinja2.filters.do_xmlattr" in qnames
+
+    xmlattr_sym = qnames["jinja2.filters.do_xmlattr"]
+    assert xmlattr_sym.package == "jinja2"
+    assert xmlattr_sym.module == "jinja2.filters"
+    assert xmlattr_sym.symbol_type == SymbolType.FUNCTION
+    assert xmlattr_sym.confidence == ConfidenceLevel.HIGH
 
 
 def test_real_advisory_pillow_symbol_extraction() -> None:
-    """Verify extracted function for pillow GHSA-wqvq-5pcm-5x3q is _path."""
-    commit_url = "https://github.com/python-pillow/Pillow/commit/40775d7105a5b512534a6fb70d29792ee5a2a901"
+    """Verify extracted symbols for Pillow GHSA-3f63-hfp8-52jq (CVE-2023-50447 ImageMath.eval)."""
+    commit_url = "https://github.com/python-pillow/Pillow/commit/45c726fd4daa63236a8f3653530f297dc87b160a"
+    diff_text = (FIXTURES_DIR / "diffs" / "pillow_45c726fd.patch").read_text(encoding="utf-8")
+    pre_fix_src = (FIXTURES_DIR / "sources" / "pillow_imagemath_pre.py").read_text(encoding="utf-8")
+    osv_data = json.loads((FIXTURES_DIR / "advisories" / "pillow_GHSA-3f63-hfp8-52jq.json").read_text(encoding="utf-8"))
+
     vcs = MockVCSClient(
-        diffs={commit_url: PILLOW_DIFF},
-        files={(commit_url, "src/PIL/Path.py", True): PILLOW_PRE_FIX_PATH_PY},
+        diffs={commit_url: diff_text},
+        files={(commit_url, "src/PIL/ImageMath.py", True): pre_fix_src},
     )
     resolver = AdvisorySymbolResolver(vcs_client=vcs)
-    adv = parse_osv_json(PILLOW_OSV_JSON)
+    adv = parse_osv_json(osv_data)
 
     symbols = resolver.resolve(adv)
     assert len(symbols) == 1
     sym = symbols[0]
     assert sym.package == "pillow"
-    assert sym.qualified_name == "pillow.PIL.Path._path"
-    assert sym.is_public_api is False  # Starts with underscore
+    assert sym.module == "PIL.ImageMath"
+    assert sym.qualified_name == "PIL.ImageMath.eval"
+    assert sym.symbol_type == SymbolType.FUNCTION
+    assert sym.confidence == ConfidenceLevel.HIGH
+    assert sym.source_of_evidence == SymbolEvidenceSource.FIX_COMMIT_DIFF
+    assert sym.is_public_api is True
 
 
 def test_commit_miner_handles_module_level_change() -> None:

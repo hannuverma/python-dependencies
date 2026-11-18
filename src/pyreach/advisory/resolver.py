@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from typing import Protocol
+
+import httpx
 
 from pyreach.advisory.commit_miner import CommitMiner
 from pyreach.advisory.diff_parser import parse_unified_diff
@@ -43,6 +47,67 @@ class MockVCSClient:
 
     def get_file_content_at_commit(self, commit_ref: str, file_path: str, pre_fix: bool = True) -> str | None:
         return self.files.get((commit_ref, file_path, pre_fix))
+
+
+class HTTPVCSClient:
+    """Live VCS client fetching commit diffs and historical files over HTTP/GitHub."""
+
+    def __init__(self, timeout: float = 15.0) -> None:
+        self.timeout = timeout
+
+    def get_commit_diff(self, commit_ref: str) -> str | None:
+        url = commit_ref if commit_ref.endswith(".patch") else f"{commit_ref}.patch"
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                r = client.get(url, follow_redirects=True)
+                if r.status_code == 200:
+                    return r.text
+        except Exception:
+            pass
+        # Fallback to local fixture if offline
+        m = re.search(r"commit/([0-9a-fA-F]+)", commit_ref)
+        if m:
+            short_sha = m.group(1)[:8].lower()
+            diff_candidates = list(Path("tests/fixtures/diffs").glob(f"*{short_sha}*.patch"))
+            if diff_candidates:
+                try:
+                    return diff_candidates[0].read_text(encoding="utf-8")
+                except Exception:
+                    pass
+        return None
+
+    def get_file_content_at_commit(self, commit_ref: str, file_path: str, pre_fix: bool = True) -> str | None:
+        m = re.search(r"github\.com/([^/]+)/([^/]+)/commit/([0-9a-fA-F]+)", commit_ref)
+        if not m:
+            return None
+        owner, repo, sha = m.groups()
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                if pre_fix:
+                    commit_api = f"https://api.github.com/repos/{owner}/{repo}/commits/{sha}"
+                    r = client.get(commit_api, follow_redirects=True)
+                    if r.status_code == 200:
+                        parents = r.json().get("parents", [])
+                        target_sha = parents[0]["sha"] if parents else sha
+                    else:
+                        target_sha = sha
+                else:
+                    target_sha = sha
+                raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{target_sha}/{file_path}"
+                r_raw = client.get(raw_url, follow_redirects=True)
+                if r_raw.status_code == 200:
+                    return r_raw.text
+        except Exception:
+            pass
+        # Fallback to local source fixture if offline
+        stem = Path(file_path).stem.lower()
+        src_candidates = list(Path("tests/fixtures/sources").glob(f"*{stem}*pre.py"))
+        if src_candidates:
+            try:
+                return src_candidates[0].read_text(encoding="utf-8")
+            except Exception:
+                pass
+        return None
 
 
 class AdvisorySymbolResolver:

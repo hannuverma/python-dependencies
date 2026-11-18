@@ -32,11 +32,16 @@ def normalize_module_path(file_path: str, package_name: str) -> str:
     if parts and parts[-1] == "__init__":
         parts = parts[:-1]
 
+    # If path already has package directory and submodule (e.g. PIL/ImageMath or urllib3/util/url),
+    # then parts is already the dotted module name.
+    if len(parts) >= 2:
+        return ".".join(parts)
+
     # Ensure module starts with package name if known
     norm_pkg = canonicalize_name(package_name).replace("-", "_")
     if parts and canonicalize_name(parts[0]).replace("-", "_") == norm_pkg:
-        return ".".join(parts)
-    return f"{norm_pkg}.{'.'.join(parts)}" if parts else norm_pkg
+        return parts[0]
+    return f"{norm_pkg}.{parts[0]}" if parts else norm_pkg
 
 
 class ASTSymbolLocator(ast.NodeVisitor):

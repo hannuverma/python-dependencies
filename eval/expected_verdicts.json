@@ -1,0 +1,100 @@
+[
+  {
+    "name": "case1_pillow_reachable",
+    "project_path": "demo/case1_reachable",
+    "advisory_id": "GHSA-3f63-hfp8-52jq",
+    "package": "pillow",
+    "expected_verdict": "REACHABLE",
+    "description": "App directly calls ImageMath.eval from main() execution path."
+  },
+  {
+    "name": "case2_pillow_not_reachable",
+    "project_path": "demo/case2_not_reachable",
+    "advisory_id": "GHSA-3f63-hfp8-52jq",
+    "package": "pillow",
+    "expected_verdict": "NOT_REACHABLE",
+    "description": "App defines ImageMath.eval call inside dead/uncalled function; main() only calls safe Image.new."
+  },
+  {
+    "name": "case3_pillow_uncertain",
+    "project_path": "demo/case3_uncertain",
+    "advisory_id": "GHSA-3f63-hfp8-52jq",
+    "package": "pillow",
+    "expected_verdict": "UNCERTAIN",
+    "description": "App calls getattr(ImageMath, os.environ.get('PIXEL_OP', 'eval')), touching Pillow namespace with dynamic attribute."
+  },
+  {
+    "name": "fixture_urllib3_direct_call",
+    "fixture_type": "inline",
+    "project_sources": {
+      "main.py": "import urllib3.util.url\ndef run(): urllib3.util.url.parse_url('https://example.com')\nif __name__ == '__main__': run()"
+    },
+    "dep_sources": {
+      "urllib3": {
+        "src/urllib3/util/url.py": "def parse_url(u): return u"
+      }
+    },
+    "advisory_id": "GHSA-q2q7-5pp4-w6pg",
+    "package": "urllib3",
+    "target_module": "urllib3.util.url",
+    "target_symbol": "urllib3.util.url.parse_url",
+    "expected_verdict": "REACHABLE",
+    "description": "Direct call to vulnerable parse_url in urllib3."
+  },
+  {
+    "name": "fixture_urllib3_not_called",
+    "fixture_type": "inline",
+    "project_sources": {
+      "main.py": "import urllib3.util.retry\ndef run(): return urllib3.util.retry.Retry()\nif __name__ == '__main__': run()"
+    },
+    "dep_sources": {
+      "urllib3": {
+        "src/urllib3/util/retry.py": "class Retry: pass",
+        "src/urllib3/util/url.py": "def parse_url(u): return u"
+      }
+    },
+    "advisory_id": "GHSA-q2q7-5pp4-w6pg",
+    "package": "urllib3",
+    "target_module": "urllib3.util.url",
+    "target_symbol": "urllib3.util.url.parse_url",
+    "expected_verdict": "NOT_REACHABLE",
+    "description": "App imports Retry but never calls parse_url; provably not reachable."
+  },
+  {
+    "name": "fixture_unrecognized_framework",
+    "fixture_type": "inline",
+    "project_sources": {
+      "server.py": "import falcon\napp = falcon.App()\ndef on_get(req, resp): pass"
+    },
+    "dep_sources": {
+      "safe-lib": {
+        "safe_lib/__init__.py": "def do_work(): pass"
+      }
+    },
+    "advisory_id": "GHSA-fake-falcon",
+    "package": "safe-lib",
+    "target_module": "safe_lib",
+    "target_symbol": "safe_lib.do_work",
+    "expected_verdict": "UNCERTAIN",
+    "description": "Unrecognized web framework (Falcon) triggers entry point uncertainty."
+  },
+  {
+    "name": "fixture_c_extension_native_symbol",
+    "fixture_type": "inline",
+    "project_sources": {
+      "main.py": "import PIL.Image\ndef run(): pass\nif __name__ == '__main__': run()"
+    },
+    "dep_sources": {
+      "pillow": {
+        "PIL/Image.py": "def open(fp): pass"
+      }
+    },
+    "native_modules": ["PIL._imaging"],
+    "advisory_id": "GHSA-native-cve",
+    "package": "pillow",
+    "target_module": "PIL._imaging",
+    "target_symbol": "PIL._imaging.font_getsize",
+    "expected_verdict": "UNCERTAIN",
+    "description": "Target symbol implemented in compiled C extension (.so/.pyd)."
+  }
+]

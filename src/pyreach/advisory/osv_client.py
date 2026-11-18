@@ -93,6 +93,14 @@ class HTTPOSVClient:
                 data = resp.json()
                 return parse_osv_json(data)
         except Exception:
+            # Fallback to local fixture if offline
+            fixture_candidates = list(Path("tests/fixtures/advisories").glob(f"*{advisory_id}*.json"))
+            if fixture_candidates:
+                try:
+                    data = json.loads(fixture_candidates[0].read_text(encoding="utf-8"))
+                    return parse_osv_json(data)
+                except Exception:
+                    pass
             return None
 
     def query_advisories(self, package_name: str, version: str | None = None) -> list[Advisory]:

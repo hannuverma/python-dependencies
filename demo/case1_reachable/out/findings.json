@@ -1,0 +1,45 @@
+[
+  {
+    "advisory_id": "GHSA-3f63-hfp8-52jq",
+    "package_name": "pillow",
+    "installed_version": "10.1.0",
+    "verdict": "REACHABLE",
+    "confidence": "high",
+    "affected_symbols": [
+      {
+        "package": "pillow",
+        "module": "PIL.ImageMath",
+        "qualified_name": "PIL.ImageMath.eval",
+        "symbol_type": "function",
+        "source_of_evidence": "fix_commit_diff",
+        "confidence": "high",
+        "line_start": 222,
+        "line_end": 260,
+        "file_path": "src/PIL/ImageMath.py",
+        "diff_hunk": "@@ -237,6 +237,10 @@ def eval(expression, _dict={}, **kw):\n     args.update(_dict)\n     args.update(kw)\n     for k, v in args.items():\n+        if '__' in k or hasattr(__builtins__, k):\n+            msg = f\"'{k}' not allowed\"\n+            raise ValueError(msg)\n+\n         if hasattr(v, \"im\"):\n             args[k] = _Operand(v)\n ",
+        "is_public_api": true,
+        "exposed_by_public_callers": [],
+        "description": "Enclosing function for modified line 240"
+      }
+    ],
+    "call_path": [
+      {
+        "symbol": "case1_reachable.main.run",
+        "file_path": "main.py",
+        "line_number": 11,
+        "call_type": "direct",
+        "snippet": null
+      },
+      {
+        "symbol": "PIL.ImageMath.eval",
+        "file_path": "main.py",
+        "line_number": 6,
+        "call_type": "direct",
+        "snippet": null
+      }
+    ],
+    "uncertainty_reasons": [],
+    "analysis_timestamp": "2026-11-18T19:01:04.991202+00:00",
+    "summary": "Reachable call path found leading to PIL.ImageMath.eval in 2 hop(s)."
+  }
+]

@@ -11,6 +11,7 @@ from packaging.utils import canonicalize_name
 from rich.console import Console
 
 from pyreach.advisory.osv_client import HTTPOSVClient, parse_osv_json
+from pyreach.advisory.resolver import AdvisorySymbolResolver, HTTPVCSClient
 from pyreach.analysis.callgraph_builder import CallGraphBuilder
 from pyreach.analysis.dynamic import DynamicFeatureClassifier
 from pyreach.analysis.entry_points import EntryPointDetector
@@ -18,7 +19,10 @@ from pyreach.analysis.imports import extract_module_imports
 from pyreach.engine.reporter import export_findings_json, render_terminal_report
 from pyreach.engine.verdict import VerdictEngine
 from pyreach.engine.vex import generate_openvex_for_findings
+from pyreach.isolation.cache import CachedPackageSummary, PackageSummaryCache
 from pyreach.isolation.manifest_parser import parse_project_manifests
+from pyreach.isolation.pypi_client import HTTPPyPIClient
+from pyreach.isolation.safe_archive import extract_tar_safely, extract_zip_safely
 from pyreach.models import Advisory, AnalysisMode, Finding
 
 app = typer.Typer(
@@ -117,19 +121,111 @@ def scan(
         console.print("[bold red]Error:[/] No valid advisories provided to evaluate.")
         raise typer.Exit(code=1)
 
-    # 4. Build unified call graph
+    # 4. Acquire pinned dependencies and resolve advisory symbols
+    dependency_sources: dict[str, dict[str, str]] = {}
+    native_modules: set[str] = set()
+    pypi_client = HTTPPyPIClient()
+    cache_root = Path.home() / ".cache" / "pyreach"
+    dl_dir = cache_root / "downloads"
+    ext_dir = cache_root / "extracted"
+    summary_cache = PackageSummaryCache()
+
+    for pkg in pinned_pkgs:
+        norm_pkg_name = canonicalize_name(pkg.name)
+        if not pkg.version:
+            continue
+        target_extract = ext_dir / norm_pkg_name / pkg.version
+        archive_file: Path | None = None
+        if not target_extract.exists():
+            try:
+                archive_file = pypi_client.download_package(
+                    package=norm_pkg_name,
+                    version=pkg.version,
+                    dest_dir=dl_dir,
+                    prefer_wheel=True,
+                )
+                if archive_file.suffix in (".whl", ".zip"):
+                    extract_zip_safely(archive_file, target_extract)
+                else:
+                    extract_tar_safely(archive_file, target_extract)
+            except Exception as e:
+                console.print(f"[bold yellow]Warning:[/] Could not acquire package '{pkg.name}=={pkg.version}' from PyPI: {e}")
+                continue
+
+        # Check summary cache if wheel is present
+        wheel_hash = "extracted"
+        if archive_file and archive_file.exists():
+            import hashlib
+            wheel_hash = hashlib.sha256(archive_file.read_bytes()).hexdigest()
+
+        cached = summary_cache.get(norm_pkg_name, pkg.version, wheel_hash)
+        if cached:
+            console.print(f"[dim]⚡ Package summary cache hit for {norm_pkg_name}=={pkg.version}[/dim]")
+            native_modules.update(cached.native_modules)
+
+        # Load extracted sources and native modules
+        if target_extract.exists():
+            pkg_sources: dict[str, str] = {}
+            for py_path in target_extract.rglob("*.py"):
+                rel_f = str(py_path.relative_to(target_extract)).replace("\\", "/")
+                try:
+                    pkg_sources[rel_f] = py_path.read_text(encoding="utf-8")
+                except Exception:
+                    continue
+            dependency_sources[norm_pkg_name] = pkg_sources
+
+            # Check for native extensions
+            for nat_path in list(target_extract.rglob("*.so")) + list(target_extract.rglob("*.pyd")):
+                rel_n = str(nat_path.relative_to(target_extract)).replace("\\", "/")
+                parts = rel_n.split("/")
+                if parts:
+                    mod_name = ".".join(parts[:-1]) if len(parts) > 1 else norm_pkg_name
+                    file_stem = parts[-1].split(".")[0]
+                    full_mod = f"{mod_name}.{file_stem}" if mod_name else file_stem
+                    native_modules.add(full_mod)
+
+            # Save in summary cache if not already cached
+            if not cached:
+                summary_cache.put(
+                    package_name=norm_pkg_name,
+                    version=pkg.version,
+                    wheel_hash=wheel_hash,
+                    summary=CachedPackageSummary(
+                        package_name=norm_pkg_name,
+                        version=pkg.version,
+                        wheel_hash=wheel_hash,
+                        analyzer_version="0.1.0",
+                        nodes=[],
+                        edges=[],
+                        native_modules=list(native_modules),
+                        package_stats={},
+                    ),
+                )
+
+    # Resolve advisory symbols if not already provided
+    vcs_client = HTTPVCSClient()
+    resolver = AdvisorySymbolResolver(vcs_client=vcs_client)
+    for adv in adv_objects:
+        if not adv.extracted_symbols:
+            try:
+                adv.extracted_symbols = resolver.resolve(adv)
+            except Exception as e:
+                console.print(f"[bold yellow]Warning:[/] Could not resolve symbols for advisory '{adv.id}': {e}")
+
+    # 5. Build unified call graph
     builder = CallGraphBuilder()
     cg = builder.build_graph(
         project_name=canonicalize_name(project_path.name),
         project_sources=project_sources,
-        dependency_sources={},  # Dependencies analyzed if unpacked in site-packages or cache
+        dependency_sources=dependency_sources,
     )
+    cg.native_modules.update(native_modules)
 
-    # 5. Detect entry points
+    # 6. Detect entry points
     detector = EntryPointDetector(mode=analysis_mode)
     detector.detect_and_register(cg, project_sources, project_path)
 
-    # 6. Extract dynamic constructs across project files
+    # 7. Extract dynamic constructs across project files
     dynamic_sites = []
     for rel_path, code in project_sources.items():
         mod_name = rel_path.replace("/", ".").replace("\\", ".")
