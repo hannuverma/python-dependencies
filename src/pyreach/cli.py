@@ -23,6 +23,7 @@ from pyreach.isolation.cache import CachedPackageSummary, PackageSummaryCache
 from pyreach.isolation.manifest_parser import parse_project_manifests
 from pyreach.isolation.pypi_client import HTTPPyPIClient
 from pyreach.isolation.safe_archive import extract_tar_safely, extract_zip_safely
+from pyreach.isolation.text_reader import read_text_file
 from pyreach.isolation.wheel_metadata import discover_wheel_top_level_modules
 from pyreach.models import Advisory, AnalysisMode, Finding
 
@@ -103,7 +104,7 @@ def scan(
         p = Path(adv_input)
         if p.exists() and p.suffix == ".json":
             try:
-                data = json.loads(p.read_text(encoding="utf-8"))
+                data = json.loads(read_text_file(p))
                 adv_objects.append(parse_osv_json(data))
             except Exception as e:
                 console.print(f"[bold red]Error parsing advisory JSON '{adv_input}':[/] {e}")

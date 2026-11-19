@@ -12,10 +12,12 @@ from pyreach.isolation.manifest_parser import (
 from pyreach.isolation.pypi_client import HTTPPyPIClient, MockPyPIClient, PyPIClientInterface
 from pyreach.isolation.safe_archive import SafeArchiveError, extract_archive_safely
 from pyreach.isolation.sandbox import DockerSandboxRunner, SandboxConfig
+from pyreach.isolation.text_reader import read_text_file
 
 __all__ = [
     "PinnedPackage",
     "parse_requirements_txt",
+    "read_text_file",
     "parse_poetry_lock",
     "parse_pipfile_lock",
     "parse_uv_lock",

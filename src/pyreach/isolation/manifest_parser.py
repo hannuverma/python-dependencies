@@ -10,6 +10,8 @@ from pathlib import Path
 
 from packaging.utils import canonicalize_name
 
+from pyreach.isolation.text_reader import read_text_file
+
 
 @dataclass(frozen=True)
 class PinnedPackage:
@@ -186,22 +188,22 @@ def parse_project_manifests(project_root: Path) -> list[PinnedPackage]:
     # Priority: lockfiles first (poetry.lock, uv.lock, Pipfile.lock) then requirements.txt, pyproject.toml
     poetry_lock = project_root / "poetry.lock"
     if poetry_lock.exists():
-        return parse_poetry_lock(poetry_lock.read_text(encoding="utf-8"))
+        return parse_poetry_lock(read_text_file(poetry_lock))
 
     uv_lock = project_root / "uv.lock"
     if uv_lock.exists():
-        return parse_uv_lock(uv_lock.read_text(encoding="utf-8"))
+        return parse_uv_lock(read_text_file(uv_lock))
 
     pipfile_lock = project_root / "Pipfile.lock"
     if pipfile_lock.exists():
-        return parse_pipfile_lock(pipfile_lock.read_text(encoding="utf-8"))
+        return parse_pipfile_lock(read_text_file(pipfile_lock))
 
     req_txt = project_root / "requirements.txt"
     if req_txt.exists():
-        return parse_requirements_txt(req_txt.read_text(encoding="utf-8"))
+        return parse_requirements_txt(read_text_file(req_txt))
 
     pyproj = project_root / "pyproject.toml"
     if pyproj.exists():
-        return parse_pyproject_toml(pyproj.read_text(encoding="utf-8"))
+        return parse_pyproject_toml(read_text_file(pyproj))
 
     return []

@@ -4,9 +4,12 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from pyreach.models import (
+    AffectedSymbol,
     CallHop,
     ConfidenceLevel,
     Finding,
+    SymbolEvidenceSource,
+    SymbolType,
     UncertaintyCategory,
     UncertaintyReason,
     Verdict,
@@ -22,6 +25,14 @@ def test_agent_coordinator_tool_execution() -> None:
         installed_version="1.0.0",
         verdict=Verdict.REACHABLE,
         confidence=ConfidenceLevel.HIGH,
+        affected_symbols=[AffectedSymbol(
+            package="testpkg",
+            module="testpkg.api",
+            qualified_name="testpkg.api:vuln_call",
+            symbol_type=SymbolType.FUNCTION,
+            source_of_evidence=SymbolEvidenceSource.FIX_COMMIT_DIFF,
+            confidence=ConfidenceLevel.HIGH,
+        )],
         call_path=[
             CallHop(
                 symbol="main:run",
@@ -45,6 +56,14 @@ def test_agent_coordinator_tool_execution() -> None:
         installed_version="2.0.0",
         verdict=Verdict.UNCERTAIN,
         confidence=ConfidenceLevel.HIGH,
+        affected_symbols=[AffectedSymbol(
+            package="pillow",
+            module="PIL.ImageMath",
+            qualified_name="PIL.ImageMath.eval",
+            symbol_type=SymbolType.FUNCTION,
+            source_of_evidence=SymbolEvidenceSource.FIX_COMMIT_DIFF,
+            confidence=ConfidenceLevel.HIGH,
+        )],
         uncertainty_reasons=[
             UncertaintyReason(
                 category=UncertaintyCategory.GETATTR_NON_CONSTANT,
@@ -86,6 +105,14 @@ def test_agent_answers_false_positive_claim_with_evidence() -> None:
         installed_version="10.1.0",
         verdict=Verdict.REACHABLE,
         confidence=ConfidenceLevel.HIGH,
+        affected_symbols=[AffectedSymbol(
+            package="pillow",
+            module="PIL.ImageMath",
+            qualified_name="PIL.ImageMath.eval",
+            symbol_type=SymbolType.FUNCTION,
+            source_of_evidence=SymbolEvidenceSource.FIX_COMMIT_DIFF,
+            confidence=ConfidenceLevel.HIGH,
+        )],
         call_path=[
             CallHop(
                 symbol="case1_reachable.main.run",
@@ -120,6 +147,14 @@ def test_agent_mock_llm_tool_calling_loop() -> None:
         installed_version="10.1.0",
         verdict=Verdict.REACHABLE,
         confidence=ConfidenceLevel.HIGH,
+        affected_symbols=[AffectedSymbol(
+            package="pillow",
+            module="PIL.ImageMath",
+            qualified_name="PIL.ImageMath.eval",
+            symbol_type=SymbolType.FUNCTION,
+            source_of_evidence=SymbolEvidenceSource.FIX_COMMIT_DIFF,
+            confidence=ConfidenceLevel.HIGH,
+        )],
         call_path=[
             CallHop(
                 symbol="case1_reachable.main.run",
@@ -187,6 +222,14 @@ def test_fastapi_endpoints() -> None:
         installed_version="10.1.0",
         verdict=Verdict.NOT_REACHABLE,
         confidence=ConfidenceLevel.HIGH,
+        affected_symbols=[AffectedSymbol(
+            package="pillow",
+            module="PIL.ImageMath",
+            qualified_name="PIL.ImageMath.eval",
+            symbol_type=SymbolType.FUNCTION,
+            source_of_evidence=SymbolEvidenceSource.FIX_COMMIT_DIFF,
+            confidence=ConfidenceLevel.HIGH,
+        )],
         summary="Provably not reachable.",
     )
     SCANS_STORE["test1234"] = [finding]

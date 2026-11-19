@@ -57,6 +57,46 @@ def dispatch_request(client, method_name):
     assert "urllib3" in reasons[0].details
 
 
+def test_same_named_local_module_does_not_match_package_namespace() -> None:
+    """A local 'pil' import must not be confused with Pillow's PIL namespace."""
+    code = """import pil
+
+def dispatch(name):
+    return getattr(pil, name)
+"""
+    tree = ast.parse(code)
+    imports = extract_module_imports(tree, "app.http")
+    classifier = DynamicFeatureClassifier("app/http.py", "app.http", imports)
+    classifier.visit(tree)
+
+    reasons = NamespaceTouchAuditor.audit_dynamic_sites_for_alert(
+        classifier.dynamic_sites,
+        "pillow",
+        target_modules={"PIL", "PIL.ImageMath"},
+    )
+    assert reasons == []
+
+
+def test_aliased_package_import_matches_namespace() -> None:
+    """An aliased import must still identify the package namespace."""
+    code = """import PIL as P
+
+def dispatch(name):
+    return getattr(P, name)
+"""
+    tree = ast.parse(code)
+    imports = extract_module_imports(tree, "app.http")
+    classifier = DynamicFeatureClassifier("app/http.py", "app.http", imports)
+    classifier.visit(tree)
+
+    reasons = NamespaceTouchAuditor.audit_dynamic_sites_for_alert(
+        classifier.dynamic_sites,
+        "pillow",
+        target_modules={"PIL", "PIL.ImageMath"},
+    )
+    assert len(reasons) == 1
+
+
 def test_non_constant_dynamic_import_triggers_uncertainty() -> None:
     """Non-constant importlib.import_module triggers Condition A."""
     code = """import importlib

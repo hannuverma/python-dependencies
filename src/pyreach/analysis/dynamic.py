@@ -31,6 +31,7 @@ class DynamicSite:
     resolved_target: str | None = None
     imported_packages_in_scope: tuple[str, ...] = field(default_factory=tuple)
     receiver_type: str | None = None
+    import_aliases: tuple[tuple[str, str], ...] = field(default_factory=tuple)
 
 
 class DynamicFeatureClassifier(ast.NodeVisitor):
@@ -52,6 +53,9 @@ class DynamicFeatureClassifier(ast.NodeVisitor):
             canonicalize_name(imp.source_module.split(".")[0])
             for imp in imports.alias_map.values()
         }))
+        self.import_aliases = tuple(
+            sorted((alias, imp.source_module) for alias, imp in imports.alias_map.items())
+        )
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         func_id = f"{self.module_name}:{node.name}"
@@ -183,6 +187,7 @@ class DynamicFeatureClassifier(ast.NodeVisitor):
                             resolved_target=const_attr,
                             imported_packages_in_scope=self.imported_packages,
                             receiver_type=rec_type,
+                            import_aliases=self.import_aliases,
                         )
                     )
                     # Create medium-confidence edge if receiver was imported
@@ -213,6 +218,7 @@ class DynamicFeatureClassifier(ast.NodeVisitor):
                             is_constant=False,
                             imported_packages_in_scope=self.imported_packages,
                             receiver_type=rec_type,
+                            import_aliases=self.import_aliases,
                         )
                     )
 
@@ -355,6 +361,41 @@ class NamespaceTouchAuditor:
                 all_targets.add(clean_m)
                 all_targets.add(canonicalize_name(m))
 
+        alias_map = dict(site.import_aliases)
+
+        def receiver_origin() -> str | None:
+            if not site.receiver_expr:
+                return None
+            base = site.receiver_expr.split(".")[0]
+            source = alias_map.get(base)
+            if source is None:
+                return None
+            suffix = site.receiver_expr[len(base):].lstrip(".")
+            return f"{source}.{suffix}" if suffix else source
+
+        origin = receiver_origin()
+        origin_parts = origin.split(".") if origin else []
+        origin_base = origin_parts[0].replace("-", "_") if origin_parts else None
+        target_module_names = {
+            t.replace("-", "_") for t in (target_modules or set())
+        }
+        receiver_matches_target = (
+            origin_base in target_module_names
+            or (origin_base and origin_base.lower() in {norm_target, norm_target.replace("-", "_")})
+            if origin_base
+            else False
+        )
+        receiver_name_matches_target = origin is None and (
+            site.receiver_expr is not None
+            and (
+                site.receiver_expr.lower() in all_targets
+                or any(
+                    site.receiver_expr.lower().startswith(f"{t}.")
+                    for t in all_targets
+                )
+            )
+        )
+
         # If site was cleanly resolved to a constant safe target, it doesn't cause uncertainty
         if site.is_constant and site.category not in (
             UncertaintyCategory.MONKEY_PATCH,
@@ -376,9 +417,9 @@ class NamespaceTouchAuditor:
         # calls on it are provably directed away from target package.
         if site.receiver_expr:
             rec_base = canonicalize_name(site.receiver_expr.split(".")[0])
-            rec_lower = site.receiver_expr.lower()
             if rec_base in site.imported_packages_in_scope and not (
-                rec_base in all_targets or any(t in rec_lower for t in all_targets)
+                receiver_name_matches_target
+                or receiver_matches_target
             ):
                 return False, ""
 
@@ -416,7 +457,10 @@ class NamespaceTouchAuditor:
         # Receiver explicitly names or references target package
         if site.receiver_expr:
             norm_rec = canonicalize_name(site.receiver_expr.split(".")[0])
-            if norm_rec in all_targets or any(t in site.receiver_expr.lower() for t in all_targets):
+            if (
+                receiver_name_matches_target
+                or receiver_matches_target
+            ):
                 return (
                     True,
                     f"Condition B.1 triggered: Receiver '{site.receiver_expr}' originates from "
@@ -428,8 +472,8 @@ class NamespaceTouchAuditor:
         # -------------------------------------------------------------------
         if site.category == UncertaintyCategory.GETATTR_NON_CONSTANT:
             if site.receiver_expr and (
-                any(t in site.receiver_expr.lower() for t in all_targets)
-                or site.receiver_expr in site.imported_packages_in_scope
+                receiver_name_matches_target
+                or receiver_matches_target
             ):
                 return (
                     True,
