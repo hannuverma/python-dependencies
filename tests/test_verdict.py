@@ -49,6 +49,32 @@ if __name__ == '__main__':
     ]
 
 
+def test_native_fix_takes_precedence_over_empty_symbol_guard() -> None:
+    """Native-only fixes report the native boundary instead of a generic empty-symbol result."""
+    project_sources = {
+        "main.py": """def main():
+    pass
+
+if __name__ == '__main__':
+    main()
+"""
+    }
+    cg = CallGraphBuilder().build_graph("proj", project_sources, {})
+    EntryPointDetector().detect_and_register(cg, project_sources)
+    advisory = Advisory(
+        id="GHSA-native-empty",
+        package_name="native-pkg",
+        native_fix_detected=True,
+    )
+
+    finding = VerdictEngine(cg).evaluate_advisory(advisory, "1.0.0")
+
+    assert finding.verdict == Verdict.UNCERTAIN
+    assert [r.category for r in finding.uncertainty_reasons] == [
+        UncertaintyCategory.C_EXTENSION
+    ]
+
+
 def test_finding_validator_rejects_not_reachable_without_symbols() -> None:
     """The model validator independently enforces the no-symbol soundness rule."""
     try:

@@ -101,8 +101,8 @@ def render_terminal_report(findings: list[Finding], console: Console | None = No
             content = (
                 f"[bold green]VERDICT: NOT_REACHABLE[/] (Confidence: [green]{f.confidence.value.upper()}[/])\n\n"
                 f"[white]{f.summary}[/]\n\n"
-                "[dim]• OpenVEX status:[/] [bold]not_affected[/]\n"
-                "[dim]• Justification:[/] [bold]vulnerable_code_not_in_execute_path[/]"
+                "[dim]- OpenVEX status:[/] [bold]not_affected[/]\n"
+                "[dim]- Justification:[/] [bold]vulnerable_code_not_in_execute_path[/]"
             )
             con.print(
                 Panel(
@@ -117,7 +117,7 @@ def render_terminal_report(findings: list[Finding], console: Console | None = No
             reasons_lines = []
             for r in f.uncertainty_reasons:
                 reasons_lines.append(
-                    f"• [[bold yellow]{r.category.value}[/]] at [dim]{r.location}[/]: {r.details}"
+                    f"- [[bold yellow]{r.category.value}[/]] at [dim]{r.location}[/]: {r.details}"
                 )
             reasons_text = "\n".join(reasons_lines) if reasons_lines else f.summary
             content = (

@@ -97,28 +97,6 @@ class VerdictEngine:
                     summary="Dependency chain incomplete: required package missing, unparsed, or failed.",
                 )
 
-        # A negative verdict is unsound when symbol extraction produced no valid targets.
-        if not advisory.extracted_symbols:
-            no_sym_reason = UncertaintyReason(
-                category=UncertaintyCategory.NO_AFFECTED_SYMBOLS,
-                location=f"advisory:{advisory.id}",
-                details=(
-                    "No valid affected symbols remained after advisory resolution and "
-                    "fix-file filtering."
-                ),
-            )
-            return Finding(
-                advisory_id=advisory.id,
-                package_name=pkg_norm,
-                installed_version=installed_version,
-                verdict=Verdict.UNCERTAIN,
-                confidence=ConfidenceLevel.LOW,
-                uncertainty_reasons=[no_sym_reason],
-                distribution_filename=dist_fn,
-                distribution_tag=dist_tag,
-                summary="No affected symbols could be identified soundly.",
-            )
-
         if advisory.native_fix_detected:
             native_reason = UncertaintyReason(
                 category=UncertaintyCategory.C_EXTENSION,
@@ -139,6 +117,28 @@ class VerdictEngine:
                 distribution_filename=dist_fn,
                 distribution_tag=dist_tag,
                 summary="Fix includes native code; reachability is capped at UNCERTAIN.",
+            )
+
+        # A negative verdict is unsound when symbol extraction produced no valid targets.
+        if not advisory.extracted_symbols:
+            no_sym_reason = UncertaintyReason(
+                category=UncertaintyCategory.NO_AFFECTED_SYMBOLS,
+                location=f"advisory:{advisory.id}",
+                details=(
+                    "No valid affected symbols remained after advisory resolution and "
+                    "fix-file filtering."
+                ),
+            )
+            return Finding(
+                advisory_id=advisory.id,
+                package_name=pkg_norm,
+                installed_version=installed_version,
+                verdict=Verdict.UNCERTAIN,
+                confidence=ConfidenceLevel.LOW,
+                uncertainty_reasons=[no_sym_reason],
+                distribution_filename=dist_fn,
+                distribution_tag=dist_tag,
+                summary="No affected symbols could be identified soundly.",
             )
 
         # -------------------------------------------------------------------
