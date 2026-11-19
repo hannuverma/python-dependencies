@@ -53,6 +53,7 @@ $$\text{CacheKey} = \text{SHA256}\Big(\text{canonicalize\_name}(pkg) \,\|\, vers
 4. **Measured Performance (5-run benchmark measured via `time.perf_counter`)**:
    - Existing benchmark record: cold `Pillow==10.1.0` indexing **11.293s ± 0.981s**; cached analysis **2.407s ± 0.118s**.
    - These numbers are historical measurements from the repository benchmark and should be refreshed after analyzer changes.
+   - A current local three-run scan of `demo/case1_reachable` measured **10.329s**, **7.782s**, and **5.264s**; no aggregate or speedup claim is inferred from these three runs.
 
 ## (d) Soundness guards added after the initial design
 
