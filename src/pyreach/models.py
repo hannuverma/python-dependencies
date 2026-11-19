@@ -88,6 +88,7 @@ class UncertaintyCategory(str, Enum):
     UNRESOLVED_ENTRY_POINTS = "unresolved_entry_points"
     MISSING_DEPENDENCY_SOURCE = "missing_dependency_source"
     PLATFORM_WHEEL = "platform_wheel"
+    NO_AFFECTED_SYMBOLS = "no_affected_symbols"
     OTHER = "other"
 
 
@@ -664,6 +665,12 @@ class Finding(BaseModel):
     @model_validator(mode="after")
     def validate_soundness_and_confidence_invariants(self) -> Finding:
         """Enforce strict soundness rules regarding LLM symbols, entry points, and verdicts."""
+        if not self.affected_symbols:
+            if self.verdict == Verdict.NOT_REACHABLE:
+                raise ValueError(
+                    "Soundness violation: NOT_REACHABLE is forbidden with no affected symbols."
+                )
+
         has_llm_symbol = any(
             sym.source_of_evidence == SymbolEvidenceSource.LLM_FALLBACK
             for sym in self.affected_symbols

@@ -16,12 +16,53 @@ from pyreach.models import (
     Advisory,
     AffectedSymbol,
     ConfidenceLevel,
+    Finding,
     SymbolEvidenceSource,
     SymbolType,
+    UncertaintyCategory,
     Verdict,
 )
 
 runner = CliRunner()
+
+
+def test_empty_affected_symbols_have_dedicated_uncertainty_category() -> None:
+    """No affected symbols must never produce a negative verdict."""
+    project_sources = {
+        "main.py": """def main():
+    pass
+
+if __name__ == '__main__':
+    main()
+"""
+    }
+    cg = CallGraphBuilder().build_graph("proj", project_sources, {})
+    EntryPointDetector().detect_and_register(cg, project_sources)
+    finding = VerdictEngine(cg).evaluate_advisory(
+        Advisory(id="GHSA-empty-symbols", package_name="missing-pkg"),
+        "1.0.0",
+    )
+    assert finding.verdict == Verdict.UNCERTAIN
+    assert [r.category for r in finding.uncertainty_reasons] == [
+        UncertaintyCategory.NO_AFFECTED_SYMBOLS
+    ]
+
+
+def test_finding_validator_rejects_not_reachable_without_symbols() -> None:
+    """The model validator independently enforces the no-symbol soundness rule."""
+    try:
+        Finding(
+            advisory_id="GHSA-empty-symbols",
+            package_name="pkg",
+            installed_version="1.0.0",
+            verdict=Verdict.NOT_REACHABLE,
+            confidence=ConfidenceLevel.HIGH,
+            summary="invalid",
+        )
+    except ValueError as exc:
+        assert "no affected symbols" in str(exc).lower()
+    else:
+        raise AssertionError("Finding accepted NOT_REACHABLE with no affected symbols")
 
 
 def test_end_to_end_three_mini_projects_and_openvex(tmp_path: Path) -> None:

@@ -39,6 +39,8 @@ IGNORED_PATH_PATTERNS = [
     r".*_test\.py$",
     r"\.(md|rst|txt|html|yml|yaml|toml|ini|cfg)$",
     r"(^|/)(changelog|readme|license|notice|authors)(\.|$)",
+    r"(^|/)(__about__|__version__|version|_version)\.py$",
+    r"(^|/)(vectors?|examples?|benchmarks?)/",
 ]
 
 HUNK_HEADER_REGEX = re.compile(
@@ -57,6 +59,19 @@ def should_ignore_file(path: str) -> bool:
         if re.search(pattern, cleaned, re.IGNORECASE):
             return True
     return False
+
+
+def is_version_only_hunk(hunk: ChangedHunk) -> bool:
+    """Return whether a hunk changes only a version assignment."""
+    changed_lines = [
+        line[1:].strip()
+        for line in hunk.hunk_text.splitlines()[1:]
+        if line.startswith(("-", "+"))
+    ]
+    return bool(changed_lines) and all(
+        re.match(r"^(?:__version__|VERSION|version)\s*=\s*['\"].*['\"]$", line)
+        for line in changed_lines
+    )
 
 
 def parse_unified_diff(diff_text: str) -> list[FileDiff]:
@@ -154,11 +169,13 @@ def parse_unified_diff(diff_text: str) -> list[FileDiff]:
                         hunk_text="\n".join(hunk_text_lines),
                         changed_pre_lines=tuple(sorted(set(changed_pre_lines))),
                     )
-                    current_fd.hunks.append(hunk)
+                    if not is_version_only_hunk(hunk):
+                        current_fd.hunks.append(hunk)
                 else:
                     i += 1
 
-            file_diffs.append(current_fd)
+            if current_fd.hunks:
+                file_diffs.append(current_fd)
         else:
             i += 1
 

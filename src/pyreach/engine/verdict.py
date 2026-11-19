@@ -97,6 +97,28 @@ class VerdictEngine:
                     summary="Dependency chain incomplete: required package missing, unparsed, or failed.",
                 )
 
+        # A negative verdict is unsound when symbol extraction produced no valid targets.
+        if not advisory.extracted_symbols:
+            no_sym_reason = UncertaintyReason(
+                category=UncertaintyCategory.NO_AFFECTED_SYMBOLS,
+                location=f"advisory:{advisory.id}",
+                details=(
+                    "No valid affected symbols remained after advisory resolution and "
+                    "fix-file filtering."
+                ),
+            )
+            return Finding(
+                advisory_id=advisory.id,
+                package_name=pkg_norm,
+                installed_version=installed_version,
+                verdict=Verdict.UNCERTAIN,
+                confidence=ConfidenceLevel.LOW,
+                uncertainty_reasons=[no_sym_reason],
+                distribution_filename=dist_fn,
+                distribution_tag=dist_tag,
+                summary="No affected symbols could be identified soundly.",
+            )
+
         # -------------------------------------------------------------------
         # Step 2: Complete Entry Point Coverage Check
         # -------------------------------------------------------------------
@@ -125,24 +147,6 @@ class VerdictEngine:
         # -------------------------------------------------------------------
         # Step 3: Check for symbols
         # -------------------------------------------------------------------
-        if not advisory.extracted_symbols:
-            no_sym_reason = UncertaintyReason(
-                category=UncertaintyCategory.IMPRECISE_SYMBOL,
-                location=f"advisory:{advisory.id}",
-                details="Advisory contains no identified affected symbols in package.",
-            )
-            return Finding(
-                advisory_id=advisory.id,
-                package_name=pkg_norm,
-                installed_version=installed_version,
-                verdict=Verdict.UNCERTAIN,
-                confidence=ConfidenceLevel.LOW,
-                uncertainty_reasons=[no_sym_reason],
-                distribution_filename=dist_fn,
-                distribution_tag=dist_tag,
-                summary="No affected symbols could be extracted from fix commits or tags.",
-            )
-
         # -------------------------------------------------------------------
         # Step 4: Multi-Source Path Search to Affected Symbols
         # -------------------------------------------------------------------

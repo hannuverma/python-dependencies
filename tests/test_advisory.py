@@ -43,6 +43,51 @@ def test_diff_parser_filters_non_code() -> None:
     assert len(file_diffs[0].hunks) == 2
 
 
+def test_diff_parser_filters_release_metadata_files() -> None:
+    """Release/version metadata changes must not become affected module symbols."""
+    diff_text = """diff --git a/src/cryptography/__about__.py b/src/cryptography/__about__.py
+index 1111111..2222222 100644
+--- a/src/cryptography/__about__.py
++++ b/src/cryptography/__about__.py
+@@ -1 +1 @@
+-__version__ = "46.0.6"
++__version__ = "46.0.7"
+diff --git a/vectors/cryptography_vectors/__about__.py b/vectors/cryptography_vectors/__about__.py
+index 1111111..2222222 100644
+--- a/vectors/cryptography_vectors/__about__.py
++++ b/vectors/cryptography_vectors/__about__.py
+@@ -1 +1 @@
+-__version__ = "46.0.6"
++__version__ = "46.0.7"
+"""
+    assert parse_unified_diff(diff_text) == []
+
+
+def test_resolver_returns_no_symbols_for_release_only_fix() -> None:
+    """A fix containing only release metadata must not invent a module symbol."""
+    commit_url = "https://github.com/pyca/cryptography/commit/release"
+    diff_text = """diff --git a/src/cryptography/__about__.py b/src/cryptography/__about__.py
+index 1111111..2222222 100644
+--- a/src/cryptography/__about__.py
++++ b/src/cryptography/__about__.py
+@@ -1 +1 @@
+-__version__ = "46.0.6"
++__version__ = "46.0.7"
+"""
+    resolver = AdvisorySymbolResolver(
+        vcs_client=MockVCSClient(
+            diffs={commit_url: diff_text},
+            files={(commit_url, "src/cryptography/__about__.py", True): '__version__ = "46.0.6"\n'},
+        )
+    )
+    advisory = Advisory(
+        id="GHSA-version-only",
+        package_name="cryptography",
+        fix_commits=[commit_url],
+    )
+    assert resolver.resolve(advisory) == []
+
+
 def test_real_advisory_urllib3_symbol_extraction() -> None:
     """Verify extracted symbols for urllib3 GHSA-q2q7-5pp4-w6pg (CVE-2021-33503)."""
     commit_url = "https://github.com/urllib3/urllib3/commit/2d4a3fee6de2fa45eb82169361918f759269b4ec"
