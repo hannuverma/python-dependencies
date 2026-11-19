@@ -186,7 +186,11 @@ def scan(
         if target_extract.exists():
             search_dir = target_extract
             children = [p for p in target_extract.iterdir() if p.is_dir() and not p.name.startswith(".")]
-            if len(children) == 1 and not (target_extract / "__init__.py").exists():
+            if (
+                len(children) == 1
+                and not (target_extract / "__init__.py").exists()
+                and not children[0].name.endswith(".dist-info")
+            ):
                 search_dir = children[0]
             if (search_dir / "src").is_dir():
                 search_dir = search_dir / "src"

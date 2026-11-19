@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from pyreach.analysis.callgraph_builder import CallGraphBuilder
@@ -265,3 +266,33 @@ if __name__ == '__main__':
     assert result.exit_code == 0
     assert (out_dir / "findings.json").exists()
     assert (out_dir / "openvex.json").exists()
+
+
+def test_cli_indexes_single_file_distribution_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A single-file module must not be replaced by its lone dist-info directory."""
+    project_dir = tmp_path / "test_app"
+    project_dir.mkdir()
+    (project_dir / "main.py").write_text(
+        "import six\n\nif __name__ == '__main__':\n    six.add(1, 2)\n",
+        encoding="utf-8",
+    )
+    (project_dir / "requirements.txt").write_text("six==1.0.0\n", encoding="utf-8")
+
+    extract_root = tmp_path / ".cache" / "pyreach" / "extracted" / "six" / "1.0.0"
+    extract_root.mkdir(parents=True)
+    (extract_root / "six.py").write_text("def add(a, b): return a + b\n", encoding="utf-8")
+    (extract_root / "six-1.0.0.dist-info").mkdir()
+
+    from pyreach import cli
+
+    monkeypatch.setattr(cli.Path, "home", lambda: tmp_path)
+
+    adv_file = tmp_path / "advisory.json"
+    adv_file.write_text(
+        '{"id":"GHSA-six","affected":[{"package":{"name":"six"}}]}',
+        encoding="utf-8",
+    )
+    result = runner.invoke(app, ["scan", str(project_dir), "-a", str(adv_file)])
+    assert result.exit_code == 0
