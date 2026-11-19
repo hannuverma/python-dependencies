@@ -11,6 +11,8 @@ from packaging.utils import canonicalize_name
 
 from pyreach.models import Advisory
 
+ADVISORY_CACHE_VERSION = "2"
+
 
 class OSVClientInterface(Protocol):
     """Protocol for fetching vulnerability advisories from OSV or local fixtures."""
@@ -50,7 +52,7 @@ def parse_osv_json(data: dict[str, Any]) -> Advisory:
                     elif "introduced" in event:
                         affected_ranges.append(f">={event['introduced']}")
 
-    # Extract FIX references
+    # Extract FIX references from references[] list
     fix_commits: list[str] = []
     references: list[str] = []
     for ref in data.get("references", []):
@@ -61,6 +63,32 @@ def parse_osv_json(data: dict[str, Any]) -> Advisory:
         ref_type = ref.get("type", "").upper()
         if ref_type == "FIX" or "/commit/" in url:
             fix_commits.append(url)
+
+    # Also extract fix commits from affected[].ranges[type=GIT].events[].fixed.
+    # OSV schema: https://ossf.github.io/osv-schema/#affectedrangestype-field
+    github_repos = [
+        url.rstrip("/")
+        for url in references
+        if "github.com/" in url
+        and "/security/advisories/" not in url
+        and "/commit/" not in url
+        and "/pull/" not in url
+        and "/issues/" not in url
+    ]
+    for affected_entry in affected_list:
+        for rng in affected_entry.get("ranges", []):
+            if rng.get("type") == "GIT":
+                repo_url = str(rng.get("repo", "")).rstrip("/")
+                if not repo_url and github_repos:
+                    repo_url = github_repos[0]
+                for event in rng.get("events", []):
+                    sha = event.get("fixed", "")
+                    if sha and repo_url:
+                        commit_url = str(sha)
+                        if not commit_url.startswith(("http://", "https://")):
+                            commit_url = f"{repo_url}/commit/{commit_url}"
+                        if commit_url not in fix_commits:
+                            fix_commits.append(commit_url)
 
     return Advisory(
         id=adv_id,
@@ -84,12 +112,17 @@ class HTTPOSVClient:
 
     def get_advisory(self, advisory_id: str) -> Advisory | None:
         cache_file = Path.home() / ".cache" / "pyreach" / "advisories" / f"{advisory_id}.json"
+        cache_meta = cache_file.with_suffix(".meta")
         if cache_file.exists():
             try:
-                data = json.loads(cache_file.read_text(encoding="utf-8"))
-                return parse_osv_json(data)
+                if cache_meta.read_text(encoding="utf-8").strip() == ADVISORY_CACHE_VERSION:
+                    data = json.loads(cache_file.read_text(encoding="utf-8"))
+                    return parse_osv_json(data)
+                cache_file.unlink(missing_ok=True)
+                cache_meta.unlink(missing_ok=True)
             except Exception:
-                pass
+                cache_file.unlink(missing_ok=True)
+                cache_meta.unlink(missing_ok=True)
 
         url = f"{self.base_url}/vulns/{advisory_id}"
         try:
@@ -102,6 +135,7 @@ class HTTPOSVClient:
                 try:
                     cache_file.parent.mkdir(parents=True, exist_ok=True)
                     cache_file.write_text(json.dumps(data), encoding="utf-8")
+                    cache_meta.write_text(ADVISORY_CACHE_VERSION, encoding="utf-8")
                 except Exception:
                     pass
                 return parse_osv_json(data)

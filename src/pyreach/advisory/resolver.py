@@ -9,7 +9,7 @@ from typing import Protocol
 import httpx
 
 from pyreach.advisory.commit_miner import CommitMiner
-from pyreach.advisory.diff_parser import parse_unified_diff
+from pyreach.advisory.diff_parser import parse_unified_diff, parse_unified_diff_with_metadata
 from pyreach.advisory.llm_fallback import ASTValidatedLLMExtractor
 from pyreach.models import (
     Advisory,
@@ -152,16 +152,10 @@ class AdvisorySymbolResolver:
             if not diff_text:
                 continue
 
-            file_diffs = parse_unified_diff(diff_text)
-            native_paths = re.findall(r"^diff --git a/(.+?) b/(.+?)$", diff_text, re.MULTILINE)
-            if any(
-                path.lower().endswith((".c", ".h", ".cpp", ".rs", ".pyx"))
-                or "/src/rust/" in f"/{path.lower()}"
-                for pair in native_paths
-                for path in pair
-            ):
+            result = parse_unified_diff_with_metadata(diff_text)
+            if result.has_native_changes and not result.has_python_changes:
                 advisory.native_fix_detected = True
-            for fd in file_diffs:
+            for fd in result.file_diffs:
                 old_path = fd.old_path or fd.new_path
                 pre_source = self.vcs_client.get_file_content_at_commit(
                     commit_url, old_path, pre_fix=True

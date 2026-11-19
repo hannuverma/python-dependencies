@@ -30,6 +30,43 @@ class FileDiff:
     hunks: list[ChangedHunk] = field(default_factory=list)
 
 
+# File extensions considered native compiled code
+NATIVE_EXTENSIONS = frozenset({".rs", ".c", ".h", ".cpp", ".cxx", ".cc", ".hpp", ".pyx", ".pxd"})
+# Directory prefixes that signal native code (even without extension check)
+NATIVE_DIR_PATTERNS = [
+    r"(^|/)src/rust/",
+    r"(^|/)src/c/",
+    r"(^|/)src/cpp/",
+    r"(^|/)csrc/",
+    r"(^|/)native/",
+]
+
+
+@dataclass
+class DiffParseResult:
+    """Result of parsing a unified diff, including native-code detection metadata."""
+
+    file_diffs: list[FileDiff]
+    has_native_changes: bool = False
+    has_python_changes: bool = False
+    native_files: list[str] = field(default_factory=list)
+
+
+def is_native_file(path: str) -> bool:
+    """Return True if path points to a compiled native source file."""
+    cleaned = path.replace("\\", "/").strip()
+    if cleaned.startswith("a/") or cleaned.startswith("b/"):
+        cleaned = cleaned[2:]
+    import os
+    ext = os.path.splitext(cleaned)[1].lower()
+    if ext in NATIVE_EXTENSIONS:
+        return True
+    for pattern in NATIVE_DIR_PATTERNS:
+        if re.search(pattern, cleaned, re.IGNORECASE):
+            return True
+    return False
+
+
 IGNORED_PATH_PATTERNS = [
     r"(^|/)(tests?|testing)/",
     r"(^|/)docs?/",
@@ -71,6 +108,37 @@ def is_version_only_hunk(hunk: ChangedHunk) -> bool:
     return bool(changed_lines) and all(
         re.match(r"^(?:__version__|VERSION|version)\s*=\s*['\"].*['\"]$", line)
         for line in changed_lines
+    )
+
+
+def _parse_all_file_paths(diff_text: str) -> list[str]:
+    """Extract every changed file path from a unified diff header, before any filtering."""
+    paths: list[str] = []
+    for line in diff_text.splitlines():
+        if line.startswith("diff --git "):
+            parts = line.split()
+            path = parts[2][2:] if len(parts) > 2 and parts[2].startswith("a/") else ""
+            if not path and len(parts) > 3:
+                path = parts[3][2:] if parts[3].startswith("b/") else ""
+            if path:
+                paths.append(path)
+    return paths
+
+
+def parse_unified_diff_with_metadata(diff_text: str) -> DiffParseResult:
+    """Parse a unified diff and return Python FileDiffs plus native-code detection metadata."""
+    all_paths = _parse_all_file_paths(diff_text)
+    native_files = [p for p in all_paths if is_native_file(p)]
+    has_native = bool(native_files)
+
+    file_diffs = parse_unified_diff(diff_text)
+    has_python = bool(file_diffs)
+
+    return DiffParseResult(
+        file_diffs=file_diffs,
+        has_native_changes=has_native,
+        has_python_changes=has_python,
+        native_files=native_files,
     )
 
 

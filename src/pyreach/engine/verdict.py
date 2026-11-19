@@ -121,13 +121,27 @@ class VerdictEngine:
 
         # A negative verdict is unsound when symbol extraction produced no valid targets.
         if not advisory.extracted_symbols:
+            # Distinguish: were there commits to analyze, or was there no data at all?
+            if advisory.fix_commits:
+                # We had commits but all Python files were filtered (native-only, test-only, docs-only)
+                detail = (
+                    "Fix commit(s) were found and fetched, but all changed files were filtered out "
+                    "(native code, tests, docs, or version-only). No Python-level symbols could be "
+                    "identified. The vulnerability may still affect your project if it calls into "
+                    f"affected native extension code in '{advisory.package_name}'."
+                )
+            else:
+                # No fix commits in the advisory at all
+                detail = (
+                    "No fix commits were found in the advisory record. This may be a data-only "
+                    "advisory (e.g. a CA bundle update), a supply-chain advisory (e.g. bundled "
+                    "OpenSSL version), or an advisory with links only to GitHub Security Advisory "
+                    "pages rather than code commits. Static symbol-level analysis is not applicable."
+                )
             no_sym_reason = UncertaintyReason(
                 category=UncertaintyCategory.NO_AFFECTED_SYMBOLS,
                 location=f"advisory:{advisory.id}",
-                details=(
-                    "No valid affected symbols remained after advisory resolution and "
-                    "fix-file filtering."
-                ),
+                details=detail,
             )
             return Finding(
                 advisory_id=advisory.id,
@@ -138,7 +152,11 @@ class VerdictEngine:
                 uncertainty_reasons=[no_sym_reason],
                 distribution_filename=dist_fn,
                 distribution_tag=dist_tag,
-                summary="No affected symbols could be identified soundly.",
+                summary=(
+                    "No Python symbols identified: fix commits exist but all were native code."
+                    if advisory.fix_commits
+                    else "No fix commits found — data-only or supply-chain advisory."
+                ),
             )
 
         # -------------------------------------------------------------------

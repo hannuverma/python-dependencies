@@ -2,11 +2,14 @@
 
 import json
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 from pyreach.advisory.commit_miner import CommitMiner
 from pyreach.advisory.diff_parser import parse_unified_diff
 from pyreach.advisory.llm_fallback import ASTValidatedLLMExtractor, MockLLMExtractor
-from pyreach.advisory.osv_client import parse_osv_json
+from pyreach.advisory.osv_client import HTTPOSVClient, parse_osv_json
 from pyreach.advisory.resolver import AdvisorySymbolResolver, MockVCSClient
 from pyreach.models import (
     Advisory,
@@ -29,6 +32,127 @@ def test_osv_json_ingestion() -> None:
     assert adv.package_name == "urllib3"
     assert "1.26.5" in adv.fixed_versions
     assert "https://github.com/urllib3/urllib3/commit/2d4a3fee6de2fa45eb82169361918f759269b4ec" in adv.fix_commits
+
+
+def test_osv_git_range_ingestion_uses_repository_reference() -> None:
+    """GIT range fixed events become usable commit references."""
+    adv = parse_osv_json(
+        {
+            "id": "GHSA-git-range",
+            "affected": [
+                {
+                    "package": {"name": "example"},
+                    "ranges": [
+                        {
+                            "type": "GIT",
+                            "events": [{"introduced": "0"}, {"fixed": "abc123"}],
+                        }
+                    ],
+                }
+            ],
+            "references": [{"type": "PACKAGE", "url": "https://github.com/example/project"}],
+        }
+    )
+
+    assert adv.fix_commits == ["https://github.com/example/project/commit/abc123"]
+
+
+def test_diff_parser_identifies_native_only_changes() -> None:
+    """Native-only commits are distinguishable from Python source fixes."""
+    diff_text = """diff --git a/src/native.c b/src/native.c
+index 1111111..2222222 100644
+--- a/src/native.c
++++ b/src/native.c
+@@ -1 +1 @@
+-return 0;
++return 1;
+"""
+    from pyreach.advisory.diff_parser import parse_unified_diff_with_metadata
+
+    parsed = parse_unified_diff_with_metadata(diff_text)
+    assert parsed.has_native_changes is True
+    assert parsed.has_python_changes is False
+
+
+def test_diff_parser_distinguishes_mixed_native_and_python_changes() -> None:
+    """A mixed commit is not classified as native-only."""
+    diff_text = """diff --git a/src/native.c b/src/native.c
+index 1111111..2222222 100644
+--- a/src/native.c
++++ b/src/native.c
+@@ -1 +1 @@
+-return 0;
++return 1;
+diff --git a/src/module.py b/src/module.py
+index 1111111..2222222 100644
+--- a/src/module.py
++++ b/src/module.py
+@@ -1 +1 @@
+-VALUE = 0
++VALUE = 1
+"""
+    from pyreach.advisory.diff_parser import parse_unified_diff_with_metadata
+
+    parsed = parse_unified_diff_with_metadata(diff_text)
+    assert parsed.has_native_changes is True
+    assert parsed.has_python_changes is True
+
+
+def test_osv_client_reloads_cache_without_current_schema_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Old advisory cache entries are discarded so newly supported GIT ranges are fetched."""
+    cache_dir = tmp_path / ".cache" / "pyreach" / "advisories"
+    cache_dir.mkdir(parents=True)
+    cache_file = cache_dir / "GHSA-cache.json"
+    cache_file.write_text('{"id": "GHSA-cache"}', encoding="utf-8")
+    cache_file.with_suffix(".meta").write_text("1", encoding="utf-8")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    raw = {
+        "id": "GHSA-cache",
+        "affected": [
+            {
+                "package": {"name": "example"},
+                "ranges": [
+                    {
+                        "type": "GIT",
+                        "repo": "https://github.com/example/project",
+                        "events": [{"fixed": "abc123"}],
+                    }
+                ],
+            }
+        ],
+    }
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, Any]:
+            return raw
+
+    class FakeClient:
+        def __init__(self, **_: object) -> None:
+            pass
+
+        def __enter__(self) -> "FakeClient":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def get(self, _: str) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr("pyreach.advisory.osv_client.httpx.Client", FakeClient)
+    advisory = HTTPOSVClient().get_advisory("GHSA-cache")
+
+    assert advisory is not None
+    assert advisory.fix_commits == ["https://github.com/example/project/commit/abc123"]
+    assert cache_file.with_suffix(".meta").read_text(encoding="utf-8") == "2"
 
 
 def test_diff_parser_filters_non_code() -> None:
