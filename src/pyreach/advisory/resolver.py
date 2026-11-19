@@ -153,6 +153,14 @@ class AdvisorySymbolResolver:
                 continue
 
             file_diffs = parse_unified_diff(diff_text)
+            native_paths = re.findall(r"^diff --git a/(.+?) b/(.+?)$", diff_text, re.MULTILINE)
+            if any(
+                path.lower().endswith((".c", ".h", ".cpp", ".rs", ".pyx"))
+                or "/src/rust/" in f"/{path.lower()}"
+                for pair in native_paths
+                for path in pair
+            ):
+                advisory.native_fix_detected = True
             for fd in file_diffs:
                 old_path = fd.old_path or fd.new_path
                 pre_source = self.vcs_client.get_file_content_at_commit(

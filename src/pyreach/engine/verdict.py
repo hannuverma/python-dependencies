@@ -119,6 +119,28 @@ class VerdictEngine:
                 summary="No affected symbols could be identified soundly.",
             )
 
+        if advisory.native_fix_detected:
+            native_reason = UncertaintyReason(
+                category=UncertaintyCategory.C_EXTENSION,
+                location=f"advisory:{advisory.id}",
+                details=(
+                    "The advisory fix changes native code (.c/.h/.cpp/.rs/.pyx or src/rust); "
+                    "static Python analysis cannot prove reachability across that boundary."
+                ),
+            )
+            return Finding(
+                advisory_id=advisory.id,
+                package_name=pkg_norm,
+                installed_version=installed_version,
+                verdict=Verdict.UNCERTAIN,
+                confidence=ConfidenceLevel.HIGH,
+                affected_symbols=advisory.extracted_symbols,
+                uncertainty_reasons=[native_reason],
+                distribution_filename=dist_fn,
+                distribution_tag=dist_tag,
+                summary="Fix includes native code; reachability is capped at UNCERTAIN.",
+            )
+
         # -------------------------------------------------------------------
         # Step 2: Complete Entry Point Coverage Check
         # -------------------------------------------------------------------

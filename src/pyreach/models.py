@@ -197,6 +197,10 @@ class Advisory(BaseModel):
         default_factory=list,
         description="Vulnerable symbols identified via commit diff or fallback analysis",
     )
+    native_fix_detected: bool = Field(
+        default=False,
+        description="Whether a referenced fix changes native source or extension code",
+    )
 
     def is_version_affected(self, version: str) -> bool:
         """Check if a given version string is affected by this advisory."""

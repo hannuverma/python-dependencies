@@ -88,6 +88,28 @@ index 1111111..2222222 100644
     assert resolver.resolve(advisory) == []
 
 
+def test_resolver_marks_native_fix_changes() -> None:
+    commit_url = "https://github.com/example/native/commit/native"
+    diff_text = """diff --git a/src/native.c b/src/native.c
+index 1111111..2222222 100644
+--- a/src/native.c
++++ b/src/native.c
+@@ -1 +1 @@
+-return 0;
++return 1;
+"""
+    resolver = AdvisorySymbolResolver(
+        vcs_client=MockVCSClient(diffs={commit_url: diff_text})
+    )
+    advisory = Advisory(
+        id="GHSA-native",
+        package_name="native-pkg",
+        fix_commits=[commit_url],
+    )
+    resolver.resolve(advisory)
+    assert advisory.native_fix_detected is True
+
+
 def test_real_advisory_urllib3_symbol_extraction() -> None:
     """Verify extracted symbols for urllib3 GHSA-q2q7-5pp4-w6pg (CVE-2021-33503)."""
     commit_url = "https://github.com/urllib3/urllib3/commit/2d4a3fee6de2fa45eb82169361918f759269b4ec"
