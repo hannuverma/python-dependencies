@@ -10,7 +10,8 @@ import typer
 from packaging.utils import canonicalize_name
 from rich.console import Console
 
-from pyreach.advisory.osv_client import HTTPOSVClient, parse_osv_json
+from pyreach.advisory.loader import load_advisory_input
+from pyreach.advisory.osv_client import HTTPOSVClient
 from pyreach.advisory.resolver import AdvisorySymbolResolver, HTTPVCSClient
 from pyreach.analysis.callgraph_builder import CallGraphBuilder
 from pyreach.analysis.dynamic import DynamicFeatureClassifier
@@ -23,7 +24,6 @@ from pyreach.isolation.cache import CachedPackageSummary, PackageSummaryCache
 from pyreach.isolation.manifest_parser import parse_project_manifests
 from pyreach.isolation.pypi_client import HTTPPyPIClient
 from pyreach.isolation.safe_archive import extract_tar_safely, extract_zip_safely
-from pyreach.isolation.text_reader import read_text_file
 from pyreach.isolation.wheel_metadata import discover_wheel_top_level_modules
 from pyreach.models import Advisory, AnalysisMode, Finding
 
@@ -62,7 +62,7 @@ def scan(
             "-a",
             help="OSV advisory IDs (e.g. GHSA-xxx) or paths to advisory JSON files.",
         ),
-    ],
+    ] = [],
     out: Annotated[
         Path | None,
         typer.Option(
@@ -79,6 +79,14 @@ def scan(
             help="Analysis mode: 'app' (applications with entry points) or 'library' (public API).",
         ),
     ] = "app",
+    limit: Annotated[
+        int | None,
+        typer.Option("--limit", help="Maximum advisories to analyze when querying OSV."),
+    ] = None,
+    only_with_fix_commit: Annotated[
+        bool,
+        typer.Option("--only-with-fix-commit", help="Analyze only advisories with fix commits."),
+    ] = False,
 ) -> None:
     """Scan a Python project and decide reachability for each given advisory."""
     if not project_path.exists():
@@ -100,24 +108,24 @@ def scan(
     # 3. Load advisories
     adv_objects: list[Advisory] = []
     osv_client = HTTPOSVClient()
+    if not advisories:
+        for pkg in pinned_pkgs:
+            if pkg.version:
+                adv_objects.extend(osv_client.query_advisories(pkg.name, pkg.version))
+        unique: dict[str, Advisory] = {adv.id: adv for adv in adv_objects}
+        adv_objects = list(unique.values())
+        if only_with_fix_commit:
+            adv_objects = [adv for adv in adv_objects if adv.fix_commits]
+        if limit is not None:
+            adv_objects = adv_objects[: max(0, limit)]
+        console.print(f"Loaded {len(adv_objects)} advisories from OSV querybatch")
     for adv_input in advisories:
-        p = Path(adv_input)
-        if p.exists() and p.suffix == ".json":
-            try:
-                data = json.loads(read_text_file(p))
-                adv_objects.append(parse_osv_json(data))
-            except Exception as e:
-                console.print(f"[bold red]Error parsing advisory JSON '{adv_input}':[/] {e}")
-        else:
-            # Split comma-separated IDs if passed as a single string
-            for adv_id in adv_input.split(","):
-                clean_id = adv_id.strip()
-                if clean_id:
-                    adv = osv_client.get_advisory(clean_id)
-                    if adv:
-                        adv_objects.append(adv)
-                    else:
-                        console.print(f"[bold yellow]Warning:[/] Advisory '{clean_id}' not found in OSV database.")
+        try:
+            loaded, source = load_advisory_input(adv_input, osv_client)
+            adv_objects.extend(loaded)
+            console.print(f"Loaded {len(loaded)} advisories from {source}")
+        except ValueError as exc:
+            console.print(f"[bold red]Error loading advisories:[/] {exc}")
 
     if not adv_objects:
         console.print("[bold red]Error:[/] No valid advisories provided to evaluate.")
