@@ -126,6 +126,10 @@ def scan(
     dependency_sources: dict[str, dict[str, str]] = {}
     native_modules: set[str] = set()
     package_top_levels: dict[str, set[str]] = {}
+    package_distribution_filenames: dict[str, str] = {}
+    package_distribution_tags: dict[str, str] = {}
+    package_platform_wheels: dict[str, str] = {}
+    package_has_platform_conditionals: set[str] = set()
     pypi_client = HTTPPyPIClient()
     cache_root = Path.home() / ".cache" / "pyreach"
     dl_dir = cache_root / "downloads"
@@ -171,9 +175,16 @@ def scan(
 
         # Load extracted sources and native modules
         if target_extract.exists():
+            search_dir = target_extract
+            children = [p for p in target_extract.iterdir() if p.is_dir() and not p.name.startswith(".")]
+            if len(children) == 1 and not (target_extract / "__init__.py").exists():
+                search_dir = children[0]
+            if (search_dir / "src").is_dir():
+                search_dir = search_dir / "src"
+
             pkg_sources: dict[str, str] = {}
-            for py_path in target_extract.rglob("*.py"):
-                rel_f = str(py_path.relative_to(target_extract)).replace("\\", "/")
+            for py_path in search_dir.rglob("*.py"):
+                rel_f = str(py_path.relative_to(search_dir)).replace("\\", "/")
                 try:
                     pkg_sources[rel_f] = py_path.read_text(encoding="utf-8")
                 except Exception:
@@ -181,14 +192,62 @@ def scan(
             dependency_sources[norm_pkg_name] = pkg_sources
 
             # Discover top-level importable modules dynamically from wheel metadata
-            discovered_top_levels = discover_wheel_top_level_modules(target_extract)
+            discovered_top_levels = discover_wheel_top_level_modules(search_dir)
+            if not discovered_top_levels and search_dir != target_extract:
+                discovered_top_levels = discover_wheel_top_level_modules(target_extract)
             package_top_levels[norm_pkg_name] = discovered_top_levels
             if discovered_top_levels and not cached:
                 console.print(f"[dim]🔍 Discovered top-level import module(s) for {norm_pkg_name}: {', '.join(sorted(discovered_top_levels))}[/dim]")
 
+            # Distribution metadata tracking
+            meta_path = target_extract / ".dist_meta.json"
+            if meta_path.exists():
+                try:
+                    mdata = json.loads(meta_path.read_text(encoding="utf-8"))
+                    package_distribution_filenames[norm_pkg_name] = mdata.get("filename", "")
+                    package_distribution_tags[norm_pkg_name] = mdata.get("distribution_tag", "")
+                    if mdata.get("is_platform_wheel"):
+                        package_platform_wheels[norm_pkg_name] = mdata.get("filename", "")
+                except Exception:
+                    pass
+            elif archive_file and (dl_dir / f"{archive_file.name}.meta.json").exists():
+                try:
+                    mdata = json.loads((dl_dir / f"{archive_file.name}.meta.json").read_text(encoding="utf-8"))
+                    package_distribution_filenames[norm_pkg_name] = mdata.get("filename", "")
+                    package_distribution_tags[norm_pkg_name] = mdata.get("distribution_tag", "")
+                    if mdata.get("is_platform_wheel"):
+                        package_platform_wheels[norm_pkg_name] = mdata.get("filename", "")
+                    meta_path.write_text(json.dumps(mdata), encoding="utf-8")
+                except Exception:
+                    pass
+            else:
+                wheel_files = list(target_extract.glob("*.dist-info/WHEEL"))
+                if wheel_files:
+                    try:
+                        content = wheel_files[0].read_text(encoding="utf-8", errors="ignore")
+                        tags = [line.split(":", 1)[1].strip() for line in content.splitlines() if line.startswith("Tag:")]
+                        tag = tags[0] if tags else "unknown"
+                        is_pure = "none-any" in tag.lower()
+                        fn = f"{norm_pkg_name}-{pkg.version}-{tag}.whl"
+                        package_distribution_filenames[norm_pkg_name] = fn
+                        package_distribution_tags[norm_pkg_name] = tag
+                        if not is_pure:
+                            package_platform_wheels[norm_pkg_name] = fn
+                    except Exception:
+                        pass
+                else:
+                    package_distribution_filenames[norm_pkg_name] = f"{norm_pkg_name}-{pkg.version}.tar.gz"
+                    package_distribution_tags[norm_pkg_name] = "sdist"
+
+            # Check for platform-conditional Python code
+            for code in pkg_sources.values():
+                if "sys.platform" in code or "os.name" in code or "platform.system" in code:
+                    package_has_platform_conditionals.add(norm_pkg_name)
+                    break
+
             # Check for native extensions
-            for nat_path in list(target_extract.rglob("*.so")) + list(target_extract.rglob("*.pyd")):
-                rel_n = str(nat_path.relative_to(target_extract)).replace("\\", "/")
+            for nat_path in list(search_dir.rglob("*.so")) + list(search_dir.rglob("*.pyd")):
+                rel_n = str(nat_path.relative_to(search_dir)).replace("\\", "/")
                 parts = rel_n.split("/")
                 if parts:
                     mod_name = ".".join(parts[:-1]) if len(parts) > 1 else norm_pkg_name
@@ -234,6 +293,10 @@ def scan(
     )
     cg.native_modules.update(native_modules)
     cg.package_top_levels.update(package_top_levels)
+    cg.package_distribution_filenames.update(package_distribution_filenames)
+    cg.package_distribution_tags.update(package_distribution_tags)
+    cg.package_platform_wheels.update(package_platform_wheels)
+    cg.package_has_platform_conditionals.update(package_has_platform_conditionals)
 
     # 6. Detect entry points
     detector = EntryPointDetector(mode=analysis_mode)

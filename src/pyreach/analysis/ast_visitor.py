@@ -52,6 +52,8 @@ class ModuleCallGraphVisitor(ast.NodeVisitor):
         self.scope_stack: list[str] = []
         # Local variable type inference: var_name -> class_type_name
         self.local_var_types: dict[str, str] = {}
+        self.local_constants: dict[str, str] = {}
+        self.local_fn_targets: dict[str, str] = {}
 
         # Create module-level top-level node (<module_init> / <module>)
         mod_node_id = f"{module_name}:<module_init>"
@@ -249,7 +251,38 @@ class ModuleCallGraphVisitor(ast.NodeVisitor):
         self._visit_function(node)
 
     def visit_Assign(self, node: ast.Assign) -> None:
-        # Simple local type inference: x = ClassName() or x = module.ClassName()
+        # 1. Track constant string assignments: fn_name = 'vuln_dynamic_op'
+        if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            for t in node.targets:
+                if isinstance(t, ast.Name):
+                    self.local_constants[t.id] = node.value.value
+
+        # 2. Track getattr assignments: fn = getattr(module, attr_expr)
+        if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name) and node.value.func.id == "getattr":
+            if len(node.value.args) >= 2:
+                rec_arg = node.value.args[0]
+                attr_arg = node.value.args[1]
+                const_name = None
+                if isinstance(attr_arg, ast.Constant) and isinstance(attr_arg.value, str):
+                    const_name = attr_arg.value
+                elif isinstance(attr_arg, ast.Name) and attr_arg.id in self.local_constants:
+                    const_name = self.local_constants[attr_arg.id]
+
+                if const_name:
+                    callees: list[str] = []
+                    if isinstance(rec_arg, ast.Name):
+                        if rec_arg.id in self.imports.alias_map:
+                            callees.append(f"{self.imports.alias_map[rec_arg.id].source_module}:{const_name}")
+                        else:
+                            callees.append(f"{rec_arg.id}:{const_name}")
+                    elif isinstance(rec_arg, ast.Attribute):
+                        for base in self._resolve_attribute_call(rec_arg.value, rec_arg.attr):
+                            callees.append(f"{base}.{const_name}")
+                    for t in node.targets:
+                        if isinstance(t, ast.Name) and callees:
+                            self.local_fn_targets[t.id] = callees[0]
+
+        # 3. Simple local type inference: x = ClassName() or x = module.ClassName()
         if isinstance(node.value, ast.Call):
             target_type: str | None = None
             if isinstance(node.value.func, ast.Name):
@@ -378,6 +411,10 @@ class ModuleCallGraphVisitor(ast.NodeVisitor):
 
     def _resolve_direct_call(self, name: str) -> str | None:
         """Resolve a direct function call locally or via imports."""
+        # 0. Check local function targets from constant reflection (fn = getattr(mod, 'name'))
+        if name in self.local_fn_targets:
+            return self.local_fn_targets[name]
+
         # 1. Check local module definitions (including forward references)
         if name in self.local_definitions or f"{self.module_name}:{name}" in self.nodes:
             return f"{self.module_name}:{name}"

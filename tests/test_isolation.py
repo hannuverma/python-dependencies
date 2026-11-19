@@ -1,11 +1,15 @@
 """Unit tests for Stage 3: Safe package acquisition, manifest parsing, archive extraction, and sandboxing."""
 
+from __future__ import annotations
+
 import tarfile
 import zipfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from pyreach.engine.verdict import VerdictEngine
 from pyreach.isolation.manifest_parser import (
     parse_pipfile_lock,
     parse_poetry_lock,
@@ -13,12 +17,25 @@ from pyreach.isolation.manifest_parser import (
     parse_requirements_txt,
     parse_uv_lock,
 )
-from pyreach.isolation.pypi_client import MockPyPIClient
+from pyreach.isolation.pypi_client import HTTPPyPIClient, MockPyPIClient
 from pyreach.isolation.safe_archive import (
     SafeArchiveError,
     extract_archive_safely,
 )
 from pyreach.isolation.sandbox import DockerSandboxRunner, SandboxConfig
+from pyreach.models import (
+    Advisory,
+    AffectedSymbol,
+    CallGraph,
+    CallGraphNode,
+    ConfidenceLevel,
+    EntryPoint,
+    EntryPointType,
+    SymbolEvidenceSource,
+    SymbolType,
+    UncertaintyCategory,
+    Verdict,
+)
 
 
 def test_requirements_txt_parsing_with_hashes() -> None:
@@ -238,3 +255,180 @@ def test_docker_sandbox_runner_command_construction(tmp_path: Path) -> None:
     assert "scan" in cmd
     assert "GHSA-1234" in cmd
     assert "CVE-5678" in cmd
+
+
+def test_wheel_preference_order_pure_wheel_then_sdist_then_platform(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """PyPI client must prefer py3-none-any universal wheel, then sdist, then platform wheel."""
+    client = HTTPPyPIClient()
+
+    releases = [
+        {
+            "packagetype": "bdist_wheel",
+            "filename": "sample-1.0.0-cp310-cp310-manylinux.whl",
+            "url": "https://example.com/whl_plat",
+            "digests": {"sha256": "abc"},
+        },
+        {
+            "packagetype": "sdist",
+            "filename": "sample-1.0.0.tar.gz",
+            "url": "https://example.com/sdist",
+            "digests": {"sha256": "def"},
+        },
+        {
+            "packagetype": "bdist_wheel",
+            "filename": "sample-1.0.0-py3-none-any.whl",
+            "url": "https://example.com/whl_pure",
+            "digests": {"sha256": "ghi"},
+        },
+    ]
+
+    captured_url = None
+
+    class DummyStream:
+        def __enter__(self) -> DummyStream:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+        def raise_for_status(self) -> None:
+            pass
+
+        def iter_bytes(self, chunk_size: int = 65536) -> Any:
+            yield b"dummy content"
+
+    class DummyClient:
+        def __init__(self, timeout: float = 30.0) -> None:
+            pass
+
+        def __enter__(self) -> DummyClient:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+        def get(self, url: str) -> object:
+            class DummyResponse:
+                status_code = 200
+
+                def raise_for_status(self) -> None:
+                    pass
+
+                def json(self) -> dict:
+                    return {"urls": releases}
+
+            return DummyResponse()
+
+        def stream(self, method: str, url: str) -> DummyStream:
+            nonlocal captured_url
+            captured_url = url
+            return DummyStream()
+
+    monkeypatch.setattr("httpx.Client", DummyClient)
+
+    # 1. Pure wheel should be chosen first
+    target = client.download_package(
+        "sample", "1.0.0", dest_dir=tmp_path / "d1", prefer_wheel=True
+    )
+    assert "none-any.whl" in target.name
+    assert captured_url == "https://example.com/whl_pure"
+
+    # 2. When pure wheel is absent, sdist should be chosen next
+    releases_no_pure = [r for r in releases if "none-any" not in r["filename"]]
+
+    def get_no_pure(url: str) -> object:
+        class DummyResponse:
+            status_code = 200
+
+            def raise_for_status(self) -> None:
+                pass
+
+            def json(self) -> dict:
+                return {"urls": releases_no_pure}
+
+        return DummyResponse()
+
+    monkeypatch.setattr(DummyClient, "get", lambda self, url: get_no_pure(url))
+    target2 = client.download_package(
+        "sample", "1.0.0", dest_dir=tmp_path / "d2", prefer_wheel=True
+    )
+    assert target2.name.endswith(".tar.gz")
+    assert captured_url == "https://example.com/sdist"
+
+    # 3. When neither pure wheel nor sdist exists, fallback to platform wheel
+    releases_only_plat = [releases[0]]
+
+    def get_only_plat(url: str) -> object:
+        class DummyResponse:
+            status_code = 200
+
+            def raise_for_status(self) -> None:
+                pass
+
+            def json(self) -> dict:
+                return {"urls": releases_only_plat}
+
+        return DummyResponse()
+
+    monkeypatch.setattr(DummyClient, "get", lambda self, url: get_only_plat(url))
+    target3 = client.download_package(
+        "sample", "1.0.0", dest_dir=tmp_path / "d3", prefer_wheel=True
+    )
+    assert "cp310" in target3.name
+    assert captured_url == "https://example.com/whl_plat"
+
+
+def test_platform_wheel_with_platform_conditional_code_yields_uncertain() -> None:
+    """When only platform wheels exist and package has platform conditionals, verdict must be UNCERTAIN."""
+    cg = CallGraph(entry_points_complete=True)
+    cg.package_platform_wheels["c-pkg"] = "c_pkg-1.0.0-cp310-cp310-manylinux.whl"
+    cg.package_has_platform_conditionals.add("c-pkg")
+    cg.package_distribution_filenames["c-pkg"] = "c_pkg-1.0.0-cp310-cp310-manylinux.whl"
+    cg.package_distribution_tags["c-pkg"] = "cp310-cp310-manylinux"
+
+    # Add entry point
+    ep_node = CallGraphNode(
+        node_id="app:run",
+        package="app",
+        module="app",
+        name="run",
+        qualified_name="run",
+    )
+    cg.add_node(ep_node)
+    cg.add_entry_point(
+        EntryPoint(
+            symbol_id="app:run",
+            entry_type=EntryPointType.MAIN,
+            confidence=ConfidenceLevel.HIGH,
+        )
+    )
+
+    adv = Advisory(
+        id="GHSA-test-platform",
+        package_name="c-pkg",
+        fixed_versions=["2.0.0"],
+        extracted_symbols=[
+            AffectedSymbol(
+                package="c-pkg",
+                module="c_pkg.vuln",
+                qualified_name="c_pkg.vuln.bad_func",
+                symbol_type=SymbolType.FUNCTION,
+                source_of_evidence=SymbolEvidenceSource.FIX_COMMIT_DIFF,
+                confidence=ConfidenceLevel.HIGH,
+            )
+        ],
+    )
+
+    engine = VerdictEngine(call_graph=cg)
+    finding = engine.evaluate_advisory(adv, installed_version="1.0.0")
+
+    assert finding.verdict == Verdict.UNCERTAIN
+    assert finding.confidence == ConfidenceLevel.HIGH
+    assert finding.distribution_filename == "c_pkg-1.0.0-cp310-cp310-manylinux.whl"
+    assert finding.distribution_tag == "cp310-cp310-manylinux"
+    assert any(
+        r.category == UncertaintyCategory.PLATFORM_WHEEL
+        for r in finding.uncertainty_reasons
+    )

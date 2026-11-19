@@ -400,9 +400,9 @@
     "package": "dynamic_pkg",
     "target_module": "dynamic_pkg",
     "target_symbol": "dynamic_pkg.vuln_dynamic_op",
-    "expected_verdict": "UNCERTAIN",
-    "description": "Non-constant getattr dynamically executes vulnerable function at runtime.",
-    "reasoning": "Vulnerable function executes at runtime; static analysis cannot prove path statically and flags Condition C UNCERTAIN (sound firewall preventing false negative)."
+    "expected_verdict": "REACHABLE",
+    "description": "Local variable constant string propagation in getattr creates resolved call edge.",
+    "reasoning": "fn_name = 'vuln_dynamic_op' is locally resolved via constant propagation; call edge is created to dynamic_pkg:vuln_dynamic_op; REACHABLE."
   },
   {
     "name": "adv_16_higher_order_dispatch_call",
@@ -422,5 +422,24 @@
     "expected_verdict": "REACHABLE",
     "description": "Higher-order function callback passed and executed at runtime.",
     "reasoning": "dispatch() executes passed callback vuln_callback(); verified by runtime tracer."
+  },
+  {
+    "name": "adv_17_truly_dynamic_getattr",
+    "fixture_type": "inline",
+    "project_sources": {
+      "main.py": "import os\nimport dynamic_pkg\ndef run():\n    fn_name = os.environ.get('OP', 'vuln_dynamic_op')\n    fn = getattr(dynamic_pkg, fn_name)\n    fn()\nif __name__ == '__main__':\n    run()"
+    },
+    "dep_sources": {
+      "dynamic_pkg": {
+        "dynamic_pkg/__init__.py": "def vuln_dynamic_op():\n    return 'dynamically_called'"
+      }
+    },
+    "advisory_id": "GHSA-adv-17",
+    "package": "dynamic_pkg",
+    "target_module": "dynamic_pkg",
+    "target_symbol": "dynamic_pkg.vuln_dynamic_op",
+    "expected_verdict": "UNCERTAIN",
+    "description": "Truly dynamic getattr with runtime environment lookup touches target package.",
+    "reasoning": "fn_name cannot be resolved statically at compile time; triggers Condition C UNCERTAIN."
   }
 ]

@@ -127,7 +127,13 @@ def run_runtime_ground_truth(case: dict) -> tuple[str, bool]:
         proj_dir = Path(case["project_path"])
         main_path = proj_dir / "main.py"
         ext_pillow = Path.home() / ".cache" / "pyreach" / "extracted" / "pillow" / "10.1.0"
-        extra = [ext_pillow] if ext_pillow.exists() else []
+        extra = []
+        if ext_pillow.exists():
+            extra.append(ext_pillow)
+            if (ext_pillow / "Pillow-10.1.0" / "src").exists():
+                extra.append(ext_pillow / "Pillow-10.1.0" / "src")
+            elif (ext_pillow / "src").exists():
+                extra.append(ext_pillow / "src")
         return trace_execution(main_path, "eval", extra_paths=extra)
 
 

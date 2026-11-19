@@ -45,6 +45,7 @@ class DynamicFeatureClassifier(ast.NodeVisitor):
         self.current_caller_id = f"{module_name}:<module>"
         self.scope_stack: list[str] = [self.current_caller_id]
         self.class_field_types: list[dict[str, str]] = []
+        self.local_constants: dict[str, str] = {}
 
         # Extract imported packages in this file's scope
         self.imported_packages = tuple(sorted({
@@ -73,6 +74,11 @@ class DynamicFeatureClassifier(ast.NodeVisitor):
         self.scope_stack.pop()
 
     def visit_Assign(self, node: ast.Assign) -> None:
+        # Track local string constants for constant propagation
+        for target in node.targets:
+            if isinstance(target, ast.Name) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+                self.local_constants[target.id] = node.value.value
+
         # Check for monkey patching and track self.<attr> receiver types
         for target in node.targets:
             if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
@@ -157,9 +163,14 @@ class DynamicFeatureClassifier(ast.NodeVisitor):
                     if not rec_type and node.args[0].attr == "_img":
                         rec_type = "PIL.Image.Image"
 
+                const_attr: str | None = None
                 if isinstance(attr_arg, ast.Constant) and isinstance(attr_arg.value, str):
-                    # Constant resolvable attribute
                     const_attr = attr_arg.value
+                elif isinstance(attr_arg, ast.Name) and attr_arg.id in self.local_constants:
+                    const_attr = self.local_constants[attr_arg.id]
+
+                if const_attr is not None:
+                    # Constant resolvable attribute
                     self.dynamic_sites.append(
                         DynamicSite(
                             file_path=self.file_path,

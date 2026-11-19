@@ -61,29 +61,37 @@ class HTTPPyPIClient:
         if not urls:
             raise RuntimeError(f"PyPI release not found for {package}=={version}")
 
-        # Filter by preference: pure Python wheels first, then any wheel (independent of host ABI), then sdist
+        # Filter by preference: pure Python wheels (py3-none-any) first, then sdist, then platform wheels
         chosen_url: dict[str, Any] | None = None
-        if prefer_wheel:
-            # 1. Prioritize pure-python universal wheel if present
-            for u in urls:
-                fn = str(u.get("filename", "")).lower()
-                if u.get("packagetype") == "bdist_wheel" and "none-any.whl" in fn:
-                    chosen_url = u
-                    break
-            # 2. Accept any bdist_wheel for source extraction (does not depend on local Python version tag)
-            if not chosen_url:
-                for u in urls:
-                    if u.get("packagetype") == "bdist_wheel":
-                        chosen_url = u
-                        break
-        # 3. Fall back to sdist
+        dist_type = "sdist"
+
+        # 1. Prioritize pure-python universal wheel if present
+        for u in urls:
+            fn = str(u.get("filename", "")).lower()
+            if u.get("packagetype") == "bdist_wheel" and "none-any.whl" in fn:
+                chosen_url = u
+                dist_type = "pure_wheel"
+                break
+
+        # 2. Prefer sdist if no universal wheel
         if not chosen_url:
             for u in urls:
                 if u.get("packagetype") == "sdist":
                     chosen_url = u
+                    dist_type = "sdist"
                     break
+
+        # 3. Fall back to platform wheel only if neither universal wheel nor sdist exists
+        if not chosen_url and prefer_wheel:
+            for u in urls:
+                if u.get("packagetype") == "bdist_wheel":
+                    chosen_url = u
+                    dist_type = "platform_wheel"
+                    break
+
         if not chosen_url and urls:
             chosen_url = urls[0]
+            dist_type = "sdist" if chosen_url.get("packagetype") == "sdist" else "platform_wheel"
 
         if not chosen_url:
             raise RuntimeError(f"No suitable distribution found for {package}=={version}")
@@ -92,6 +100,13 @@ class HTTPPyPIClient:
         filename = str(chosen_url["filename"])
         target_file: Path = dest_dir / filename
         dest_dir.mkdir(parents=True, exist_ok=True)
+
+        # Determine distribution tag
+        if filename.endswith(".whl"):
+            parts = filename[:-4].split("-")
+            dist_tag = "-".join(parts[2:]) if len(parts) >= 3 else "wheel"
+        else:
+            dist_tag = "sdist"
 
         with httpx.Client(timeout=self.timeout) as client, client.stream("GET", download_url) as resp:
             resp.raise_for_status()
@@ -109,6 +124,21 @@ class HTTPPyPIClient:
                 raise ValueError(
                     f"Hash mismatch for {filename}: computed {computed_sha}, expected one of {expected_lower}"
                 )
+
+        # Write metadata file for distribution tracking
+        meta_file = dest_dir / f"{filename}.meta.json"
+        import json
+        meta_file.write_text(
+            json.dumps(
+                {
+                    "filename": filename,
+                    "distribution_type": dist_type,
+                    "distribution_tag": dist_tag,
+                    "is_platform_wheel": dist_type == "platform_wheel",
+                }
+            ),
+            encoding="utf-8",
+        )
 
         return target_file
 
@@ -158,4 +188,28 @@ class MockPyPIClient:
                 raise ValueError(f"MockPyPIClient: Hash mismatch for {src_path.name}")
 
         dest_file.write_bytes(content)
+
+        import json
+        is_wheel = dest_file.name.endswith(".whl")
+        is_pure = "none-any.whl" in dest_file.name.lower()
+        dist_type = "pure_wheel" if is_pure else ("platform_wheel" if is_wheel else "sdist")
+        if is_wheel:
+            parts = dest_file.name[:-4].split("-")
+            dist_tag = "-".join(parts[2:]) if len(parts) >= 3 else "wheel"
+        else:
+            dist_tag = "sdist"
+
+        meta_file = dest_dir / f"{dest_file.name}.meta.json"
+        meta_file.write_text(
+            json.dumps(
+                {
+                    "filename": dest_file.name,
+                    "distribution_type": dist_type,
+                    "distribution_tag": dist_tag,
+                    "is_platform_wheel": dist_type == "platform_wheel",
+                }
+            ),
+            encoding="utf-8",
+        )
+
         return dest_file

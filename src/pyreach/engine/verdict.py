@@ -48,6 +48,7 @@ class VerdictEngine:
         try:
             return self._evaluate_internal(advisory, installed_version, required_packages)
         except Exception as ex:
+            pkg_norm = canonicalize_name(advisory.package_name)
             # Step 7: Fail-safe catch-all defaults strictly to UNCERTAIN
             err_reason = UncertaintyReason(
                 category=UncertaintyCategory.OTHER,
@@ -56,12 +57,14 @@ class VerdictEngine:
             )
             return Finding(
                 advisory_id=advisory.id,
-                package_name=canonicalize_name(advisory.package_name),
+                package_name=pkg_norm,
                 installed_version=installed_version,
                 verdict=Verdict.UNCERTAIN,
                 confidence=ConfidenceLevel.LOW,
                 affected_symbols=advisory.extracted_symbols,
                 uncertainty_reasons=[err_reason],
+                distribution_filename=self.call_graph.package_distribution_filenames.get(pkg_norm),
+                distribution_tag=self.call_graph.package_distribution_tags.get(pkg_norm),
                 summary=f"Analysis encountered unexpected error: {str(ex)}",
             )
 
@@ -72,6 +75,8 @@ class VerdictEngine:
         required_packages: list[str] | None,
     ) -> Finding:
         pkg_norm = canonicalize_name(advisory.package_name)
+        dist_fn = self.call_graph.package_distribution_filenames.get(pkg_norm)
+        dist_tag = self.call_graph.package_distribution_tags.get(pkg_norm)
 
         # -------------------------------------------------------------------
         # Step 1: Closed-World Dependency Chain Completeness Check
@@ -87,6 +92,8 @@ class VerdictEngine:
                     confidence=ConfidenceLevel.HIGH,
                     affected_symbols=advisory.extracted_symbols,
                     uncertainty_reasons=missing_reasons,
+                    distribution_filename=dist_fn,
+                    distribution_tag=dist_tag,
                     summary="Dependency chain incomplete: required package missing, unparsed, or failed.",
                 )
 
@@ -110,6 +117,8 @@ class VerdictEngine:
                 confidence=ConfidenceLevel.HIGH,
                 affected_symbols=advisory.extracted_symbols,
                 uncertainty_reasons=[ep_reason],
+                distribution_filename=dist_fn,
+                distribution_tag=dist_tag,
                 summary="Entry-point discovery incomplete or unconfident.",
             )
 
@@ -129,6 +138,8 @@ class VerdictEngine:
                 verdict=Verdict.UNCERTAIN,
                 confidence=ConfidenceLevel.LOW,
                 uncertainty_reasons=[no_sym_reason],
+                distribution_filename=dist_fn,
+                distribution_tag=dist_tag,
                 summary="No affected symbols could be extracted from fix commits or tags.",
             )
 
@@ -175,6 +186,8 @@ class VerdictEngine:
                     affected_symbols=[reached_symbol],
                     uncertainty_reasons=[c_path_reason],
                     call_path=best_path,
+                    distribution_filename=dist_fn,
+                    distribution_tag=dist_tag,
                     summary=f"Call path to {reached_symbol.qualified_name} passes through a compiled native extension.",
                 )
 
@@ -186,6 +199,8 @@ class VerdictEngine:
                 confidence=best_confidence,
                 affected_symbols=[reached_symbol],
                 call_path=best_path,
+                distribution_filename=dist_fn,
+                distribution_tag=dist_tag,
                 summary=f"Reachable call path found leading to {reached_symbol.qualified_name} in {len(best_path)} hop(s).",
             )
 
@@ -214,6 +229,8 @@ class VerdictEngine:
                 confidence=ConfidenceLevel.HIGH,
                 affected_symbols=advisory.extracted_symbols,
                 uncertainty_reasons=touching_reasons,
+                distribution_filename=dist_fn,
+                distribution_tag=dist_tag,
                 summary=(
                     f"Dynamic constructs in project touch the '{advisory.package_name}' namespace, "
                     "preventing proof of unreachability."
@@ -246,6 +263,8 @@ class VerdictEngine:
                 confidence=ConfidenceLevel.HIGH,
                 affected_symbols=advisory.extracted_symbols,
                 uncertainty_reasons=[c_sym_reason],
+                distribution_filename=dist_fn,
+                distribution_tag=dist_tag,
                 summary="Affected symbol lives in compiled native code; cannot prove unreachability.",
             )
 
@@ -276,6 +295,8 @@ class VerdictEngine:
                 confidence=ConfidenceLevel.HIGH,
                 affected_symbols=advisory.extracted_symbols,
                 uncertainty_reasons=[c_call_reason],
+                distribution_filename=dist_fn,
+                distribution_tag=dist_tag,
                 summary="Project calls into compiled native extension of target package.",
             )
 
@@ -298,7 +319,38 @@ class VerdictEngine:
                 confidence=ConfidenceLevel.LOW,
                 affected_symbols=advisory.extracted_symbols,
                 uncertainty_reasons=[llm_reason],
+                distribution_filename=dist_fn,
+                distribution_tag=dist_tag,
                 summary="Negative verdict cannot be proved because affected symbols rely on LLM fallback.",
+            )
+
+        # Rule 6d: If only platform wheels exist and the package contains platform-conditional Python files,
+        # reachability across platforms cannot be soundly verified without universal wheel or sdist!
+        if (
+            pkg_norm in self.call_graph.package_platform_wheels
+            and pkg_norm in self.call_graph.package_has_platform_conditionals
+        ):
+            plat_whl = self.call_graph.package_platform_wheels[pkg_norm]
+            platform_reason = UncertaintyReason(
+                category=UncertaintyCategory.PLATFORM_WHEEL,
+                location=f"package:{pkg_norm}",
+                details=(
+                    f"Package '{advisory.package_name}' only provides platform-specific wheel ('{plat_whl}') "
+                    "and contains platform-conditional code (sys.platform/os.name); reachability cannot be "
+                    "soundly verified across platforms without a universal wheel or sdist."
+                ),
+            )
+            return Finding(
+                advisory_id=advisory.id,
+                package_name=pkg_norm,
+                installed_version=installed_version,
+                verdict=Verdict.UNCERTAIN,
+                confidence=ConfidenceLevel.HIGH,
+                affected_symbols=advisory.extracted_symbols,
+                uncertainty_reasons=[platform_reason],
+                distribution_filename=dist_fn,
+                distribution_tag=dist_tag,
+                summary="Only platform wheels available for package with platform-conditional code; cannot prove unreachability.",
             )
 
         # All soundness conditions satisfied! Emit NOT_REACHABLE at HIGH confidence.
@@ -309,6 +361,8 @@ class VerdictEngine:
             verdict=Verdict.NOT_REACHABLE,
             confidence=ConfidenceLevel.HIGH,
             affected_symbols=advisory.extracted_symbols,
+            distribution_filename=dist_fn,
+            distribution_tag=dist_tag,
             summary=(
                 f"Provably NOT_REACHABLE: all entry points covered under over-approximation rules, "
                 f"dependency call graph traversed, zero paths found, and zero dynamic constructs "

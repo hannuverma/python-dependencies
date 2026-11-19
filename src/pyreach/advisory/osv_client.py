@@ -83,6 +83,14 @@ class HTTPOSVClient:
         self.timeout = timeout
 
     def get_advisory(self, advisory_id: str) -> Advisory | None:
+        cache_file = Path.home() / ".cache" / "pyreach" / "advisories" / f"{advisory_id}.json"
+        if cache_file.exists():
+            try:
+                data = json.loads(cache_file.read_text(encoding="utf-8"))
+                return parse_osv_json(data)
+            except Exception:
+                pass
+
         url = f"{self.base_url}/vulns/{advisory_id}"
         try:
             with httpx.Client(timeout=self.timeout) as client:
@@ -91,6 +99,11 @@ class HTTPOSVClient:
                     return None
                 resp.raise_for_status()
                 data = resp.json()
+                try:
+                    cache_file.parent.mkdir(parents=True, exist_ok=True)
+                    cache_file.write_text(json.dumps(data), encoding="utf-8")
+                except Exception:
+                    pass
                 return parse_osv_json(data)
         except Exception:
             # Fallback to local fixture if offline

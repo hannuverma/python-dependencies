@@ -87,6 +87,7 @@ class UncertaintyCategory(str, Enum):
     UNRESOLVED_CALL_TARGET = "unresolved_call_target"
     UNRESOLVED_ENTRY_POINTS = "unresolved_entry_points"
     MISSING_DEPENDENCY_SOURCE = "missing_dependency_source"
+    PLATFORM_WHEEL = "platform_wheel"
     OTHER = "other"
 
 
@@ -323,6 +324,22 @@ class CallGraph(BaseModel):
     package_top_levels: dict[str, set[str]] = Field(
         default_factory=dict,
         description="PEP 503 normalized package name -> set of importable top-level module names from wheel top_level.txt/RECORD",
+    )
+    package_platform_wheels: dict[str, str] = Field(
+        default_factory=dict,
+        description="Normalized package name -> platform wheel filename if only platform wheels were available",
+    )
+    package_has_platform_conditionals: set[str] = Field(
+        default_factory=set,
+        description="Normalized package names containing platform-conditional code (sys.platform/os.name)",
+    )
+    package_distribution_filenames: dict[str, str] = Field(
+        default_factory=dict,
+        description="Normalized package name -> archive filename analyzed",
+    )
+    package_distribution_tags: dict[str, str] = Field(
+        default_factory=dict,
+        description="Normalized package name -> distribution tag (e.g. py3-none-any, sdist, cp310-macosx)",
     )
 
     def add_node(self, node: CallGraphNode) -> None:
@@ -631,6 +648,14 @@ class Finding(BaseModel):
         default_factory=list,
         description="List of unresolved dynamic sites or ambiguous points (for UNCERTAIN)",
     )
+    distribution_filename: str | None = Field(
+        default=None,
+        description="Exact wheel or sdist archive filename analyzed from PyPI",
+    )
+    distribution_tag: str | None = Field(
+        default=None,
+        description="Distribution tag of analyzed package (e.g. py3-none-any, sdist, cp310-macosx_10_10_x86_64)",
+    )
     analysis_timestamp: str = Field(
         default_factory=lambda: datetime.now(UTC).isoformat()
     )
@@ -695,6 +720,9 @@ class Finding(BaseModel):
         lines: list[str] = []
         lines.append(f"Advisory:  {self.advisory_id} ({self.package_name}=={self.installed_version})")
         lines.append(f"Verdict:   {self.verdict.value} (Confidence: {self.confidence.value})")
+        if self.distribution_filename:
+            tag_str = f" [tag: {self.distribution_tag}]" if self.distribution_tag else ""
+            lines.append(f"Package Dist: {self.distribution_filename}{tag_str}")
         lines.append(f"Summary:   {self.summary}")
 
         if self.affected_symbols:

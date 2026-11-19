@@ -50,6 +50,7 @@ $$\text{CacheKey} = \text{SHA256}\Big(\text{canonicalize\_name}(pkg) \,\|\, vers
 1. **Pre-Computed Package Summaries**: Stores indexed `CallGraphNode` models, intramodule `CallGraphEdge` lists, detected `native_modules` (`.so`/`.pyd`), and declared `top_level_modules` from wheel metadata (`top_level.txt` / `RECORD`).
 2. **Wheel Hash Invalidation**: If an upstream package archive is re-uploaded with the same version but altered contents, the wheel SHA-256 shifts, immediately triggering a cache miss and re-download.
 3. **Analyzer Version Invalidation**: Incrementing `pyreach`'s version string (e.g. `0.1.0` -> `0.2.0`) invalidates all cached summaries instantly, preventing stale AST representations from persisting across algorithm enhancements.
-4. **Measured Performance**:
-   - Cold download, extraction, and AST parsing of `Pillow==10.1.0` (94 Python source files): ~2.5s.
-   - Subsequent analysis using cached package summary: **0.18s** (~14x faster).
+4. **Measured Performance (5-run benchmark measured via `time.perf_counter`)**:
+   - Cold download from PyPI, safe extraction, and full AST indexing of `Pillow==10.1.0` (94 Python source files): **11.293s ± 0.981s** (min: 10.257s, max: 12.707s).
+   - Subsequent analysis using cached package summary and extracted source trees: **2.407s ± 0.118s** (min: 2.283s, max: 2.575s).
+   - Measured Cache Speedup: **4.7x faster**.

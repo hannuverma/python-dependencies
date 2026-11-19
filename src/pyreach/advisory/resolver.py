@@ -56,12 +56,27 @@ class HTTPVCSClient:
         self.timeout = timeout
 
     def get_commit_diff(self, commit_ref: str) -> str | None:
+        m = re.search(r"commit/([0-9a-fA-F]+)", commit_ref)
+        sha = m.group(1).lower() if m else "unknown"
+        cache_file = Path.home() / ".cache" / "pyreach" / "diffs" / f"{sha}.patch"
+        if cache_file.exists():
+            try:
+                return cache_file.read_text(encoding="utf-8")
+            except Exception:
+                pass
+
         url = commit_ref if commit_ref.endswith(".patch") else f"{commit_ref}.patch"
         try:
             with httpx.Client(timeout=self.timeout) as client:
                 r = client.get(url, follow_redirects=True)
                 if r.status_code == 200:
-                    return r.text
+                    text = r.text
+                    try:
+                        cache_file.parent.mkdir(parents=True, exist_ok=True)
+                        cache_file.write_text(text, encoding="utf-8")
+                    except Exception:
+                        pass
+                    return text
         except Exception:
             pass
         # Fallback to local fixture if offline
