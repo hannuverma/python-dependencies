@@ -318,3 +318,19 @@ class MainHandler(tornado.web.RequestHandler):
     assert complete2 is False  # Must be incomplete because tornado is unrecognized
     assert cg2.entry_points_complete is False
     assert cg2.has_confident_entry_points() is False
+
+
+def test_django_without_all_bootstrap_roots_is_incomplete() -> None:
+    """Django detection fails closed when settings, URL, or bootstrap roots are absent."""
+    sources = {
+        "views.py": """from django.http import HttpResponse
+
+def home(request):
+    return HttpResponse('ok')
+"""
+    }
+    cg = CallGraphBuilder().build_graph("django-app", sources, {})
+    complete = EntryPointDetector().detect_and_register(cg, sources)
+    assert complete is False
+    assert cg.framework_statuses["django"].completed is False
+    assert cg.entry_points_complete is False

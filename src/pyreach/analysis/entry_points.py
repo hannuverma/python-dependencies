@@ -74,6 +74,22 @@ class EntryPointDetector:
                 call_graph.record_framework_status(framework=unrec, completed=False, discovered_count=0)
             call_graph.entry_points_complete = False
 
+        django_complete = True
+        if "django" in detected_frameworks:
+            source_paths = {path.replace("\\", "/").lower() for path in project_sources}
+            has_settings = any(path.endswith("settings.py") for path in source_paths)
+            has_urls = any(path.endswith("urls.py") for path in source_paths)
+            has_bootstrap = any(
+                path.endswith(("manage.py", "wsgi.py", "asgi.py")) for path in source_paths
+            )
+            django_complete = has_settings and has_urls and has_bootstrap
+            if not django_complete:
+                call_graph.record_framework_status(
+                    framework="django",
+                    completed=False,
+                    discovered_count=0,
+                )
+
         # 2. Scan for specific framework entry points and __main__ guards
         discovered_per_fw: dict[str, int] = {fw: 0 for fw in detected_frameworks}
         main_discovered = 0
@@ -156,10 +172,14 @@ class EntryPointDetector:
         # Record framework discovery statuses
         call_graph.record_framework_status("main", completed=True, discovered_count=main_discovered)
         for fw, count in discovered_per_fw.items():
-            call_graph.record_framework_status(fw, completed=True, discovered_count=count)
+            call_graph.record_framework_status(
+                fw,
+                completed=django_complete if fw == "django" else True,
+                discovered_count=count,
+            )
 
         # Set entry_points_complete flag if no unrecognized frameworks were imported and entry points exist
-        if not unrecognized_detected and len(call_graph.entry_points) > 0:
+        if not unrecognized_detected and django_complete and len(call_graph.entry_points) > 0:
             call_graph.entry_points_complete = True
             return True
         else:
