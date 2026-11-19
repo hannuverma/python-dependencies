@@ -13,6 +13,9 @@ from pyreach.analysis.imports import ModuleImports, extract_module_imports
 from pyreach.models import (
     AffectedSymbol,
     CallGraph,
+    CallGraphEdge,
+    CallGraphNode,
+    PackageParseStats,
 )
 
 
@@ -39,6 +42,91 @@ class CallGraphBuilder:
 
     def __init__(self) -> None:
         self.all_classes: dict[str, ClassHierarchyInfo] = {}
+
+    def build_package_graph(
+        self,
+        package_name: str,
+        sources: dict[str, str],
+        is_dependency: bool = True,
+    ) -> tuple[list[CallGraphNode], list[CallGraphEdge], PackageParseStats]:
+        """Parse all sources of a single package into its nodes, edges, and parse statistics."""
+        norm_pkg = canonicalize_name(package_name)
+        files_total = len(sources)
+        files_parsed = 0
+        files_failed = 0
+
+        parsed_modules: dict[str, tuple[str, str, str, ast.Module, ModuleImports, bool]] = {}
+        for rel_path, code in sources.items():
+            mod_name = file_to_module_name(rel_path, norm_pkg, is_dependency=is_dependency)
+            try:
+                tree_module = ast.parse(code)
+                imports = extract_module_imports(tree_module, mod_name)
+                parsed_modules[f"{norm_pkg}:{mod_name}"] = (
+                    norm_pkg,
+                    mod_name,
+                    rel_path,
+                    tree_module,
+                    imports,
+                    is_dependency,
+                )
+                files_parsed += 1
+            except SyntaxError:
+                files_failed += 1
+
+        stats = PackageParseStats(
+            package_name=norm_pkg,
+            files_total=files_total,
+            files_parsed=files_parsed,
+            files_failed=files_failed,
+        )
+
+        package_classes: dict[str, ClassHierarchyInfo] = {}
+        module_local_defs: dict[str, set[str]] = {}
+        for key, (_p, mod_name, _rel, tree_ast, _imp, _d) in parsed_modules.items():
+            local_defs: set[str] = set()
+            for ast_item in ast.walk(tree_ast):
+                if isinstance(ast_item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    local_defs.add(ast_item.name)
+                elif isinstance(ast_item, ast.ClassDef):
+                    local_defs.add(ast_item.name)
+                    bases: list[str] = []
+                    for b in ast_item.bases:
+                        if isinstance(b, ast.Name):
+                            bases.append(b.id)
+                        elif isinstance(b, ast.Attribute) and isinstance(b.value, ast.Name):
+                            bases.append(f"{b.value.id}.{b.attr}")
+                    cls_info = ClassHierarchyInfo(name=ast_item.name, module=mod_name, bases=bases)
+                    for item in ast_item.body:
+                        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            cls_info.methods[item.name] = f"{mod_name}.{ast_item.name}.{item.name}"
+                    package_classes[f"{mod_name}.{ast_item.name}"] = cls_info
+                    package_classes[ast_item.name] = cls_info
+            module_local_defs[key] = local_defs
+
+        all_module_imports = {
+            m_name: m_imports for (_, m_name, _, _, m_imports, _) in parsed_modules.values()
+        }
+
+        nodes: list[CallGraphNode] = []
+        edges: list[CallGraphEdge] = []
+
+        for key, (pkg_str, m_name, file_p, parsed_tree, m_imports, dep_flag) in parsed_modules.items():
+            visitor = ModuleCallGraphVisitor(
+                package_name=pkg_str,
+                module_name=m_name,
+                file_path=file_p,
+                imports=m_imports,
+                is_dependency=dep_flag,
+                all_classes=package_classes,
+                all_module_imports=all_module_imports,
+            )
+            visitor.local_definitions = module_local_defs.get(key, set())
+            visitor.visit(parsed_tree)
+
+            nodes.extend(visitor.nodes.values())
+            edges.extend(visitor.edges)
+
+        return nodes, edges, stats
 
     def build_graph(
         self,

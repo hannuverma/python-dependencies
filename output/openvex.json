@@ -1,10 +1,106 @@
 {
   "@context": "https://openvex.dev/ns/v0.2.0",
-  "@id": "https://pyreach.local/vex/20261119115741240983",
+  "@id": "https://pyreach.local/vex/20261119121522641801",
   "author": "pyreach vulnerability reachability analyzer",
   "role": "automated-security-tool",
-  "timestamp": "2026-11-19T11:57:41.240935+00:00",
+  "timestamp": "2026-11-19T12:15:22.641790+00:00",
   "version": 1,
   "tooling": "pyreach/0.1.0",
-  "statements": []
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "GHSA-xqcf-hj92-967m",
+        "aliases": []
+      },
+      "products": [
+        {
+          "subcomponents": [],
+          "identifiers": {
+            "purl": "pkg:pypi/django-rest-framework@0.1.0"
+          }
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Static reachability analysis with over-approximation proved that no call path from project entry points leads to rest_framework.templatetags.rest_framework.urlize_quoted_links in django-rest-framework==0.1.0, and zero unresolved dynamic constructs touch the package namespace.",
+      "status_notes": "Provably NOT_REACHABLE: all entry points covered under over-approximation rules, dependency call graph traversed, zero paths found, and zero dynamic constructs touch 'django-rest-framework'.",
+      "timestamp": "2026-11-19T12:15:22.641067+00:00"
+    },
+    {
+      "vulnerability": {
+        "name": "PYSEC-2026-804",
+        "aliases": []
+      },
+      "products": [
+        {
+          "subcomponents": [],
+          "identifiers": {
+            "purl": "pkg:pypi/django-rest-framework@0.1.0"
+          }
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Static reachability analysis with over-approximation proved that no call path from project entry points leads to rest_framework.templatetags.rest_framework.urlize_quoted_links in django-rest-framework==0.1.0, and zero unresolved dynamic constructs touch the package namespace.",
+      "status_notes": "Provably NOT_REACHABLE: all entry points covered under over-approximation rules, dependency call graph traversed, zero paths found, and zero dynamic constructs touch 'django-rest-framework'.",
+      "timestamp": "2026-11-19T12:15:22.641629+00:00"
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-78g4-xqwv-q3g8",
+        "aliases": []
+      },
+      "products": [
+        {
+          "subcomponents": [],
+          "identifiers": {
+            "purl": "pkg:pypi/pillow@12.1.1"
+          }
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Static reachability analysis with over-approximation proved that no call path from project entry points leads to winbuild.build_prepare in pillow==12.1.1, and zero unresolved dynamic constructs touch the package namespace.",
+      "status_notes": "Provably NOT_REACHABLE: all entry points covered under over-approximation rules, dependency call graph traversed, zero paths found, and zero dynamic constructs touch 'pillow'.",
+      "timestamp": "2026-11-19T12:15:22.641701+00:00"
+    },
+    {
+      "vulnerability": {
+        "name": "GHSA-f2g6-542v-9j58",
+        "aliases": []
+      },
+      "products": [
+        {
+          "subcomponents": [],
+          "identifiers": {
+            "purl": "pkg:pypi/pillow@12.1.1"
+          }
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Static reachability analysis with over-approximation proved that no call path from project entry points leads to PIL.PdfParser.PdfParser.rewrite_pages in pillow==12.1.1, and zero unresolved dynamic constructs touch the package namespace.",
+      "status_notes": "Provably NOT_REACHABLE: all entry points covered under over-approximation rules, dependency call graph traversed, zero paths found, and zero dynamic constructs touch 'pillow'.",
+      "timestamp": "2026-11-19T12:15:22.641724+00:00"
+    },
+    {
+      "vulnerability": {
+        "name": "PYSEC-2026-3494",
+        "aliases": []
+      },
+      "products": [
+        {
+          "subcomponents": [],
+          "identifiers": {
+            "purl": "pkg:pypi/pillow@12.1.1"
+          }
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "Static reachability analysis with over-approximation proved that no call path from project entry points leads to PIL.TgaImagePlugin._save in pillow==12.1.1, and zero unresolved dynamic constructs touch the package namespace.",
+      "status_notes": "Provably NOT_REACHABLE: all entry points covered under over-approximation rules, dependency call graph traversed, zero paths found, and zero dynamic constructs touch 'pillow'.",
+      "timestamp": "2026-11-19T12:15:22.641760+00:00"
+    }
+  ]
 }

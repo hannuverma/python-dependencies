@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 from pathlib import Path
 from typing import Annotated
@@ -25,7 +26,7 @@ from pyreach.isolation.manifest_parser import parse_project_manifests
 from pyreach.isolation.pypi_client import HTTPPyPIClient
 from pyreach.isolation.safe_archive import extract_tar_safely, extract_zip_safely
 from pyreach.isolation.wheel_metadata import discover_wheel_top_level_modules
-from pyreach.models import Advisory, AnalysisMode, Finding
+from pyreach.models import Advisory, AnalysisMode, CallGraph, CallGraphEdge, CallGraphNode, Finding
 
 app = typer.Typer(
     name="pyreach",
@@ -131,163 +132,232 @@ def scan(
         console.print("[bold red]Error:[/] No valid advisories provided to evaluate.")
         raise typer.Exit(code=1)
 
-    # 4. Acquire pinned dependencies and resolve advisory symbols
-    dependency_sources: dict[str, dict[str, str]] = {}
-    native_modules: set[str] = set()
-    package_top_levels: dict[str, set[str]] = {}
-    package_distribution_filenames: dict[str, str] = {}
-    package_distribution_tags: dict[str, str] = {}
-    package_platform_wheels: dict[str, str] = {}
-    package_has_platform_conditionals: set[str] = set()
+    # 4. Acquire pinned dependencies and build CallGraph with full caching & concurrency
     pypi_client = HTTPPyPIClient()
     cache_root = Path.home() / ".cache" / "pyreach"
     dl_dir = cache_root / "downloads"
     ext_dir = cache_root / "extracted"
     summary_cache = PackageSummaryCache()
+    builder = CallGraphBuilder()
+    cg = CallGraph()
 
-    for pkg in pinned_pkgs:
-        norm_pkg_name = canonicalize_name(pkg.name)
-        if not pkg.version:
-            continue
-        target_extract = ext_dir / norm_pkg_name / pkg.version
-        archive_file: Path | None = None
-        if not target_extract.exists():
+    # Step 4a: Concurrently download & extract any un-extracted packages
+    missing_pkgs = [
+        pkg for pkg in pinned_pkgs
+        if pkg.version and not (ext_dir / canonicalize_name(pkg.name) / pkg.version).exists()
+    ]
+    if missing_pkgs:
+        console.print(f"[cyan]Acquiring {len(missing_pkgs)} missing package(s) from PyPI concurrently...[/cyan]")
+
+        def _download_and_extract(p_entry: object) -> None:
+            pkg_name = getattr(p_entry, "name", "")
+            pkg_ver = getattr(p_entry, "version", "")
+            if not pkg_ver:
+                return
+            norm_name = canonicalize_name(pkg_name)
+            target = ext_dir / norm_name / pkg_ver
             try:
-                console.print(f"[cyan]Downloading {norm_pkg_name}=={pkg.version} from PyPI...[/cyan]")
-                archive_file = pypi_client.download_package(
-                    package=norm_pkg_name,
-                    version=pkg.version,
+                arc = pypi_client.download_package(
+                    package=norm_name,
+                    version=pkg_ver,
                     dest_dir=dl_dir,
                     prefer_wheel=True,
                 )
-                console.print(f"[cyan]Extracting {archive_file.name} safely into sandbox cache...[/cyan]")
-                if archive_file.suffix in (".whl", ".zip"):
-                    extract_zip_safely(archive_file, target_extract)
+                if arc.suffix in (".whl", ".zip"):
+                    extract_zip_safely(arc, target)
                 else:
-                    extract_tar_safely(archive_file, target_extract)
-                console.print(f"[cyan]Parsing and indexing {norm_pkg_name} source ASTs...[/cyan]")
+                    extract_tar_safely(arc, target)
             except Exception as e:
-                console.print(f"[bold yellow]Warning:[/] Could not acquire package '{pkg.name}=={pkg.version}' from PyPI: {e}")
+                console.print(f"[bold yellow]Warning:[/] Could not acquire '{pkg_name}=={pkg_ver}': {e}")
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(12, len(missing_pkgs))) as executor:
+            list(executor.map(_download_and_extract, missing_pkgs))
+
+    # Step 4b: Per-package graph analysis function
+    def _analyze_package(p_entry: object) -> tuple[str, CachedPackageSummary | None]:
+        pkg_name = getattr(p_entry, "name", "")
+        pkg_ver = getattr(p_entry, "version", "")
+        norm_name = canonicalize_name(pkg_name)
+        if not pkg_ver:
+            return norm_name, None
+
+        target_extract = ext_dir / norm_name / pkg_ver
+        if not target_extract.exists():
+            return norm_name, None
+
+        # Check SQLite cache first
+        cached = summary_cache.get(norm_name, pkg_ver, "extracted")
+        if cached and cached.package_stats:
+            return norm_name, cached
+
+        search_dir = target_extract
+        children = [p for p in target_extract.iterdir() if p.is_dir() and not p.name.startswith(".")]
+        if (
+            len(children) == 1
+            and not (target_extract / "__init__.py").exists()
+            and not children[0].name.endswith(".dist-info")
+        ):
+            search_dir = children[0]
+        if (search_dir / "src").is_dir():
+            search_dir = search_dir / "src"
+
+        pkg_sources: dict[str, str] = {}
+        for py_path in search_dir.rglob("*.py"):
+            rel_f = str(py_path.relative_to(search_dir)).replace("\\", "/")
+            try:
+                pkg_sources[rel_f] = py_path.read_text(encoding="utf-8")
+            except Exception:
                 continue
 
-        # Check summary cache if wheel is present
-        wheel_hash = "extracted"
-        if archive_file and archive_file.exists():
-            import hashlib
-            wheel_hash = hashlib.sha256(archive_file.read_bytes()).hexdigest()
+        discovered_top_levels = discover_wheel_top_level_modules(search_dir)
+        if not discovered_top_levels and search_dir != target_extract:
+            discovered_top_levels = discover_wheel_top_level_modules(target_extract)
 
-        cached = summary_cache.get(norm_pkg_name, pkg.version, wheel_hash)
-        if cached:
-            console.print(f"[dim]Package summary cache hit for {norm_pkg_name}=={pkg.version}[/dim]")
-            native_modules.update(cached.native_modules)
-            package_top_levels[norm_pkg_name] = set(cached.top_level_modules)
-
-        # Load extracted sources and native modules
-        if target_extract.exists():
-            search_dir = target_extract
-            children = [p for p in target_extract.iterdir() if p.is_dir() and not p.name.startswith(".")]
-            if (
-                len(children) == 1
-                and not (target_extract / "__init__.py").exists()
-                and not children[0].name.endswith(".dist-info")
-            ):
-                search_dir = children[0]
-            if (search_dir / "src").is_dir():
-                search_dir = search_dir / "src"
-
-            pkg_sources: dict[str, str] = {}
-            for py_path in search_dir.rglob("*.py"):
-                rel_f = str(py_path.relative_to(search_dir)).replace("\\", "/")
+        dist_fn = ""
+        dist_tag = ""
+        is_plat = False
+        meta_path = target_extract / ".dist_meta.json"
+        if meta_path.exists():
+            try:
+                mdata = json.loads(meta_path.read_text(encoding="utf-8"))
+                dist_fn = mdata.get("filename", "")
+                dist_tag = mdata.get("distribution_tag", "")
+                is_plat = bool(mdata.get("is_platform_wheel"))
+            except Exception:
+                pass
+        else:
+            wheel_files = list(target_extract.glob("*.dist-info/WHEEL"))
+            if wheel_files:
                 try:
-                    pkg_sources[rel_f] = py_path.read_text(encoding="utf-8")
-                except Exception:
-                    continue
-            dependency_sources[norm_pkg_name] = pkg_sources
-
-            # Discover top-level importable modules dynamically from wheel metadata
-            discovered_top_levels = discover_wheel_top_level_modules(search_dir)
-            if not discovered_top_levels and search_dir != target_extract:
-                discovered_top_levels = discover_wheel_top_level_modules(target_extract)
-            package_top_levels[norm_pkg_name] = discovered_top_levels
-            if discovered_top_levels and not cached:
-                console.print(f"[dim]Discovered top-level import module(s) for {norm_pkg_name}: {', '.join(sorted(discovered_top_levels))}[/dim]")
-
-            # Distribution metadata tracking
-            meta_path = target_extract / ".dist_meta.json"
-            if meta_path.exists():
-                try:
-                    mdata = json.loads(meta_path.read_text(encoding="utf-8"))
-                    package_distribution_filenames[norm_pkg_name] = mdata.get("filename", "")
-                    package_distribution_tags[norm_pkg_name] = mdata.get("distribution_tag", "")
-                    if mdata.get("is_platform_wheel"):
-                        package_platform_wheels[norm_pkg_name] = mdata.get("filename", "")
-                except Exception:
-                    pass
-            elif archive_file and (dl_dir / f"{archive_file.name}.meta.json").exists():
-                try:
-                    mdata = json.loads((dl_dir / f"{archive_file.name}.meta.json").read_text(encoding="utf-8"))
-                    package_distribution_filenames[norm_pkg_name] = mdata.get("filename", "")
-                    package_distribution_tags[norm_pkg_name] = mdata.get("distribution_tag", "")
-                    if mdata.get("is_platform_wheel"):
-                        package_platform_wheels[norm_pkg_name] = mdata.get("filename", "")
-                    meta_path.write_text(json.dumps(mdata), encoding="utf-8")
+                    content = wheel_files[0].read_text(encoding="utf-8", errors="ignore")
+                    tags = [line.split(":", 1)[1].strip() for line in content.splitlines() if line.startswith("Tag:")]
+                    dist_tag = tags[0] if tags else "unknown"
+                    is_pure = "none-any" in dist_tag.lower()
+                    dist_fn = f"{norm_name}-{pkg_ver}-{dist_tag}.whl"
+                    is_plat = not is_pure
                 except Exception:
                     pass
             else:
-                wheel_files = list(target_extract.glob("*.dist-info/WHEEL"))
-                if wheel_files:
-                    try:
-                        content = wheel_files[0].read_text(encoding="utf-8", errors="ignore")
-                        tags = [line.split(":", 1)[1].strip() for line in content.splitlines() if line.startswith("Tag:")]
-                        tag = tags[0] if tags else "unknown"
-                        is_pure = "none-any" in tag.lower()
-                        fn = f"{norm_pkg_name}-{pkg.version}-{tag}.whl"
-                        package_distribution_filenames[norm_pkg_name] = fn
-                        package_distribution_tags[norm_pkg_name] = tag
-                        if not is_pure:
-                            package_platform_wheels[norm_pkg_name] = fn
-                    except Exception:
-                        pass
-                else:
-                    package_distribution_filenames[norm_pkg_name] = f"{norm_pkg_name}-{pkg.version}.tar.gz"
-                    package_distribution_tags[norm_pkg_name] = "sdist"
+                dist_fn = f"{norm_name}-{pkg_ver}.tar.gz"
+                dist_tag = "sdist"
 
-            # Check for platform-conditional Python code
-            for code in pkg_sources.values():
-                if "sys.platform" in code or "os.name" in code or "platform.system" in code:
-                    package_has_platform_conditionals.add(norm_pkg_name)
-                    break
+        has_platform_cond = any(
+            ("sys.platform" in code or "os.name" in code or "platform.system" in code)
+            for code in pkg_sources.values()
+        )
 
-            # Check for native extensions
-            for nat_path in list(search_dir.rglob("*.so")) + list(search_dir.rglob("*.pyd")):
-                rel_n = str(nat_path.relative_to(search_dir)).replace("\\", "/")
-                parts = rel_n.split("/")
-                if parts:
-                    mod_name = ".".join(parts[:-1]) if len(parts) > 1 else norm_pkg_name
-                    file_stem = parts[-1].split(".")[0]
-                    full_mod = f"{mod_name}.{file_stem}" if mod_name else file_stem
-                    native_modules.add(full_mod)
+        pkg_native_mods: list[str] = []
+        for nat_path in list(search_dir.rglob("*.so")) + list(search_dir.rglob("*.pyd")):
+            rel_n = str(nat_path.relative_to(search_dir)).replace("\\", "/")
+            parts = rel_n.split("/")
+            if parts:
+                mod_name = ".".join(parts[:-1]) if len(parts) > 1 else norm_name
+                file_stem = parts[-1].split(".")[0]
+                full_mod = f"{mod_name}.{file_stem}" if mod_name else file_stem
+                pkg_native_mods.append(full_mod)
 
-            # Save in summary cache if not already cached
-            if not cached:
-                summary_cache.put(
-                    package_name=norm_pkg_name,
-                    version=pkg.version,
-                    wheel_hash=wheel_hash,
-                    summary=CachedPackageSummary(
-                        package_name=norm_pkg_name,
-                        version=pkg.version,
-                        wheel_hash=wheel_hash,
-                        analyzer_version="0.1.0",
-                        nodes=[],
-                        edges=[],
-                        native_modules=list(native_modules),
-                        package_stats={},
-                        top_level_modules=list(discovered_top_levels),
-                    ),
-                )
+        pkg_builder = CallGraphBuilder()
+        nodes, edges, stats = pkg_builder.build_package_graph(norm_name, pkg_sources, is_dependency=True)
 
-    # Resolve advisory symbols if not already provided
+        summary = CachedPackageSummary(
+            package_name=norm_name,
+            version=pkg_ver,
+            wheel_hash="extracted",
+            analyzer_version="0.1.0",
+            nodes=[n.model_dump() for n in nodes],
+            edges=[e.model_dump() for e in edges],
+            native_modules=pkg_native_mods,
+            package_stats=stats.model_dump(),
+            top_level_modules=list(discovered_top_levels),
+            has_platform_conditionals=has_platform_cond,
+            distribution_filename=dist_fn,
+            distribution_tag=dist_tag,
+            is_platform_wheel=is_plat,
+        )
+        summary_cache.put(norm_name, pkg_ver, "extracted", summary)
+        return norm_name, summary
+
+    # Step 4c: Check cache hits and analyze uncached packages
+    cached_summaries: list[CachedPackageSummary] = []
+    uncached_entries: list[object] = []
+    for pkg in pinned_pkgs:
+        if not pkg.version:
+            continue
+        norm_name = canonicalize_name(pkg.name)
+        cached = summary_cache.get(norm_name, pkg.version, "extracted")
+        if cached and cached.package_stats:
+            cached_summaries.append(cached)
+        else:
+            uncached_entries.append(pkg)
+
+    if cached_summaries:
+        console.print(f"[dim]Loaded {len(cached_summaries)} pre-computed package call graph(s) from SQLite cache[/dim]")
+
+    new_summaries: list[CachedPackageSummary] = []
+    if uncached_entries:
+        console.print(f"[cyan]Parsing ASTs for {len(uncached_entries)} package(s) across CPU threads...[/cyan]")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(uncached_entries))) as executor:
+            for _, summary in executor.map(_analyze_package, uncached_entries):
+                if summary:
+                    new_summaries.append(summary)
+
+    # Step 4d: Populate CallGraph from all summaries
+    package_top_levels: dict[str, set[str]] = {}
+    package_distribution_filenames: dict[str, str] = {}
+    package_distribution_tags: dict[str, str] = {}
+    package_platform_wheels: dict[str, str] = {}
+    package_has_platform_conditionals: set[str] = set()
+    native_modules: set[str] = set()
+
+    for summary in cached_summaries + new_summaries:
+        norm_name = canonicalize_name(summary.package_name)
+        for node_dict in summary.nodes:
+            cg.add_node(CallGraphNode.model_validate(node_dict))
+        for edge_dict in summary.edges:
+            cg.add_edge(CallGraphEdge.model_validate(edge_dict))
+        pstats = summary.package_stats
+        cg.record_package_stats(
+            norm_name,
+            pstats.get("files_total", 0),
+            pstats.get("files_parsed", 0),
+            pstats.get("files_failed", 0),
+        )
+        native_modules.update(summary.native_modules)
+        package_top_levels[norm_name] = set(summary.top_level_modules)
+        if summary.distribution_filename:
+            package_distribution_filenames[norm_name] = summary.distribution_filename
+        if summary.distribution_tag:
+            package_distribution_tags[norm_name] = summary.distribution_tag
+        if summary.is_platform_wheel:
+            package_platform_wheels[norm_name] = summary.distribution_filename
+        if summary.has_platform_conditionals:
+            package_has_platform_conditionals.add(norm_name)
+
+    # Step 4e: Parse local project sources into CallGraph
+    proj_nodes, proj_edges, proj_stats = builder.build_package_graph(
+        package_name=canonicalize_name(project_path.name),
+        sources=project_sources,
+        is_dependency=False,
+    )
+    for n in proj_nodes:
+        cg.add_node(n)
+    for e in proj_edges:
+        cg.add_edge(e)
+    cg.record_package_stats(
+        canonicalize_name(project_path.name),
+        proj_stats.files_total,
+        proj_stats.files_parsed,
+        proj_stats.files_failed,
+    )
+
+    cg.native_modules.update(native_modules)
+    cg.package_top_levels.update(package_top_levels)
+    cg.package_distribution_filenames.update(package_distribution_filenames)
+    cg.package_distribution_tags.update(package_distribution_tags)
+    cg.package_platform_wheels.update(package_platform_wheels)
+    cg.package_has_platform_conditionals.update(package_has_platform_conditionals)
+
+    # Step 4f: Resolve advisory symbols
     vcs_client = HTTPVCSClient()
     resolver = AdvisorySymbolResolver(vcs_client=vcs_client)
     for adv in adv_objects:
@@ -296,20 +366,6 @@ def scan(
                 adv.extracted_symbols = resolver.resolve(adv)
             except Exception as e:
                 console.print(f"[bold yellow]Warning:[/] Could not resolve symbols for advisory '{adv.id}': {e}")
-
-    # 5. Build unified call graph
-    builder = CallGraphBuilder()
-    cg = builder.build_graph(
-        project_name=canonicalize_name(project_path.name),
-        project_sources=project_sources,
-        dependency_sources=dependency_sources,
-    )
-    cg.native_modules.update(native_modules)
-    cg.package_top_levels.update(package_top_levels)
-    cg.package_distribution_filenames.update(package_distribution_filenames)
-    cg.package_distribution_tags.update(package_distribution_tags)
-    cg.package_platform_wheels.update(package_platform_wheels)
-    cg.package_has_platform_conditionals.update(package_has_platform_conditionals)
 
     # 6. Detect entry points
     detector = EntryPointDetector(mode=analysis_mode)

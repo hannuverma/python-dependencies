@@ -27,6 +27,10 @@ class CachedPackageSummary:
     native_modules: list[str]
     package_stats: dict[str, Any]
     top_level_modules: list[str] = field(default_factory=list)
+    has_platform_conditionals: bool = False
+    distribution_filename: str = ""
+    distribution_tag: str = ""
+    is_platform_wheel: bool = False
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))
@@ -34,7 +38,21 @@ class CachedPackageSummary:
     @classmethod
     def from_json(cls, data_str: str) -> CachedPackageSummary:
         d = json.loads(data_str)
-        return cls(**d)
+        return cls(
+            package_name=d["package_name"],
+            version=d["version"],
+            wheel_hash=d["wheel_hash"],
+            analyzer_version=d["analyzer_version"],
+            nodes=d.get("nodes", []),
+            edges=d.get("edges", []),
+            native_modules=d.get("native_modules", []),
+            package_stats=d.get("package_stats", {}),
+            top_level_modules=d.get("top_level_modules", []),
+            has_platform_conditionals=d.get("has_platform_conditionals", False),
+            distribution_filename=d.get("distribution_filename", ""),
+            distribution_tag=d.get("distribution_tag", ""),
+            is_platform_wheel=d.get("is_platform_wheel", False),
+        )
 
 
 class PackageSummaryCache:
@@ -50,7 +68,9 @@ class PackageSummaryCache:
 
     def _init_db(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA journal_mode = WAL;")
+            conn.execute("PRAGMA synchronous = NORMAL;")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS package_summaries (
@@ -89,7 +109,7 @@ class PackageSummaryCache:
     ) -> CachedPackageSummary | None:
         """Retrieve pre-computed package summary if key matches and version has not changed."""
         key = self.compute_cache_key(package_name, version, wheel_hash, analyzer_version)
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
             cur = conn.cursor()
             cur.execute(
                 "SELECT summary_json FROM package_summaries WHERE cache_key = ?;",
@@ -115,7 +135,7 @@ class PackageSummaryCache:
         key = self.compute_cache_key(package_name, version, wheel_hash, analyzer_version)
         summary_json = summary.to_json()
         norm_pkg = canonicalize_name(package_name)
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO package_summaries
