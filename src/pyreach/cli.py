@@ -153,19 +153,19 @@ def scan(
         archive_file: Path | None = None
         if not target_extract.exists():
             try:
-                console.print(f"[cyan]📦 Downloading {norm_pkg_name}=={pkg.version} from PyPI...[/cyan]")
+                console.print(f"[cyan]Downloading {norm_pkg_name}=={pkg.version} from PyPI...[/cyan]")
                 archive_file = pypi_client.download_package(
                     package=norm_pkg_name,
                     version=pkg.version,
                     dest_dir=dl_dir,
                     prefer_wheel=True,
                 )
-                console.print(f"[cyan]📂 Extracting {archive_file.name} safely into sandbox cache...[/cyan]")
+                console.print(f"[cyan]Extracting {archive_file.name} safely into sandbox cache...[/cyan]")
                 if archive_file.suffix in (".whl", ".zip"):
                     extract_zip_safely(archive_file, target_extract)
                 else:
                     extract_tar_safely(archive_file, target_extract)
-                console.print(f"[cyan]🔍 Parsing and indexing {norm_pkg_name} source ASTs...[/cyan]")
+                console.print(f"[cyan]Parsing and indexing {norm_pkg_name} source ASTs...[/cyan]")
             except Exception as e:
                 console.print(f"[bold yellow]Warning:[/] Could not acquire package '{pkg.name}=={pkg.version}' from PyPI: {e}")
                 continue
@@ -178,7 +178,7 @@ def scan(
 
         cached = summary_cache.get(norm_pkg_name, pkg.version, wheel_hash)
         if cached:
-            console.print(f"[dim]⚡ Package summary cache hit for {norm_pkg_name}=={pkg.version}[/dim]")
+            console.print(f"[dim]Package summary cache hit for {norm_pkg_name}=={pkg.version}[/dim]")
             native_modules.update(cached.native_modules)
             package_top_levels[norm_pkg_name] = set(cached.top_level_modules)
 
@@ -206,7 +206,7 @@ def scan(
                 discovered_top_levels = discover_wheel_top_level_modules(target_extract)
             package_top_levels[norm_pkg_name] = discovered_top_levels
             if discovered_top_levels and not cached:
-                console.print(f"[dim]🔍 Discovered top-level import module(s) for {norm_pkg_name}: {', '.join(sorted(discovered_top_levels))}[/dim]")
+                console.print(f"[dim]Discovered top-level import module(s) for {norm_pkg_name}: {', '.join(sorted(discovered_top_levels))}[/dim]")
 
             # Distribution metadata tracking
             meta_path = target_extract / ".dist_meta.json"
@@ -356,8 +356,8 @@ def scan(
         openvex_path.write_text(vex_doc.to_openvex_json(indent=2), encoding="utf-8")
 
         console.print(f"[bold green]Artifacts written successfully:[/] {out_dir.resolve()}")
-        console.print(f"  • Findings JSON: {findings_json_path.name}")
-        console.print(f"  • OpenVEX Document: {openvex_path.name}")
+        console.print(f"  Findings JSON: {findings_json_path.name}")
+        console.print(f"  OpenVEX Document: {openvex_path.name}")
 
 
 @app.command()
