@@ -75,7 +75,7 @@ def load_driver(driver_name):
     assert len(reasons) == 1
     assert reasons[0].category == UncertaintyCategory.DYNAMIC_IMPORT
     assert "app/loader.py:4" in reasons[0].location
-    assert "Condition A triggered" in reasons[0].details
+    assert "Condition A" in reasons[0].details
 
 
 def test_constant_resolvable_getattr_becomes_edge() -> None:
@@ -154,3 +154,81 @@ def apply_hotfix():
         classifier.dynamic_sites, "jinja2"
     )
     assert len(reasons_jinja2) == 0
+
+
+def test_getattr_delegating_to_unrelated_type_does_not_block_not_reachable() -> None:
+    """Delegating __getattr__ to known type whose attributes cannot include vulnerable symbol does not touch."""
+    from pyreach.models import AffectedSymbol, ConfidenceLevel, SymbolEvidenceSource
+
+    code = """from PIL import Image
+
+class SafeImageWrapper:
+    def __init__(self):
+        self._img = Image.new("RGB", (10, 10))
+    def __getattr__(self, name):
+        return getattr(self._img, name)
+"""
+    tree = ast.parse(code)
+    imports = extract_module_imports(tree, "app.wrapper")
+    classifier = DynamicFeatureClassifier("app/wrapper.py", "app.wrapper", imports)
+    classifier.visit(tree)
+
+    assert len(classifier.dynamic_sites) == 1
+    site = classifier.dynamic_sites[0]
+    assert site.receiver_type == "PIL.Image.Image"
+
+    # Target symbol is PIL.ImageMath.eval in pillow
+    vuln_sym = AffectedSymbol(
+        package="pillow",
+        module="PIL.ImageMath",
+        qualified_name="eval",
+        source_of_evidence=SymbolEvidenceSource.FIX_COMMIT_DIFF,
+        confidence=ConfidenceLevel.HIGH,
+    )
+
+    reasons = NamespaceTouchAuditor.audit_dynamic_sites_for_alert(
+        classifier.dynamic_sites,
+        "pillow",
+        target_modules={"pil", "pil.imagemath"},
+        target_symbols=[vuln_sym],
+    )
+    # Must NOT block: candidate attribute set of PIL.Image.Image cannot include PIL.ImageMath.eval
+    assert len(reasons) == 0
+
+
+def test_getattr_delegating_to_vulnerable_type_still_blocks() -> None:
+    """Delegating __getattr__ to type whose attributes CAN include vulnerable symbol must still block."""
+    from pyreach.models import AffectedSymbol, ConfidenceLevel, SymbolEvidenceSource
+
+    code = """from PIL import ImageMath
+
+class MathProxy:
+    def __init__(self):
+        self._math = ImageMath
+    def __getattr__(self, name):
+        return getattr(self._math, name)
+"""
+    tree = ast.parse(code)
+    imports = extract_module_imports(tree, "app.proxy")
+    classifier = DynamicFeatureClassifier("app/proxy.py", "app.proxy", imports)
+    classifier.visit(tree)
+
+    assert len(classifier.dynamic_sites) == 1
+
+    vuln_sym = AffectedSymbol(
+        package="pillow",
+        module="PIL.ImageMath",
+        qualified_name="eval",
+        source_of_evidence=SymbolEvidenceSource.FIX_COMMIT_DIFF,
+        confidence=ConfidenceLevel.HIGH,
+    )
+
+    reasons = NamespaceTouchAuditor.audit_dynamic_sites_for_alert(
+        classifier.dynamic_sites,
+        "pillow",
+        target_modules={"pil", "pil.imagemath"},
+        target_symbols=[vuln_sym],
+    )
+    # Must block: self._math has type PIL.ImageMath which declares eval
+    assert len(reasons) >= 1
+    assert "pillow" in reasons[0].details

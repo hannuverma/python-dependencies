@@ -265,8 +265,40 @@ class ModuleCallGraphVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_With(self, node: ast.With) -> None:
-        # Context manager: with Session() as s:
+        caller_id = self._get_current_caller()
+        call_line = node.lineno
         for item in node.items:
+            # In Python, with expr executes expr.__enter__() and expr.__exit__()
+            callees: list[str] = []
+            ctx_expr = item.context_expr
+            if isinstance(ctx_expr, ast.Call):
+                func = ctx_expr.func
+                if isinstance(func, ast.Name):
+                    c = self._resolve_direct_call(func.id)
+                    if c:
+                        callees.append(c)
+                elif isinstance(func, ast.Attribute):
+                    callees.extend(self._resolve_attribute_call(func.value, func.attr))
+            elif isinstance(ctx_expr, ast.Name):
+                c = self._resolve_direct_call(ctx_expr.id)
+                if c:
+                    callees.append(c)
+            elif isinstance(ctx_expr, ast.Attribute):
+                callees.extend(self._resolve_attribute_call(ctx_expr.value, ctx_expr.attr))
+
+            for callee in callees:
+                for method in ("__enter__", "__exit__"):
+                    self.edges.append(
+                        CallGraphEdge(
+                            caller_id=caller_id,
+                            callee_id=f"{callee}.{method}",
+                            call_site_file=self.file_path,
+                            call_site_line=call_line,
+                            call_type="context_manager",
+                            confidence=ConfidenceLevel.HIGH,
+                        )
+                    )
+
             if isinstance(item.context_expr, ast.Call) and item.optional_vars:
                 if isinstance(item.optional_vars, ast.Name):
                     func = item.context_expr.func
@@ -313,7 +345,7 @@ class ModuleCallGraphVisitor(ast.NodeVisitor):
                     )
                 )
 
-        # 3. Callbacks passed as arguments: register(callback=fn) or do_work(fn)
+        # 3. Callbacks passed as arguments: register(callback=fn), do_work(fn), or dispatch(pkg.callback)
         for arg in [*node.args, *(kw.value for kw in node.keywords if kw.value)]:
             if isinstance(arg, ast.Name):
                 cb_callee = self._resolve_direct_call(arg.id)
@@ -322,6 +354,19 @@ class ModuleCallGraphVisitor(ast.NodeVisitor):
                         CallGraphEdge(
                             caller_id=caller_id,
                             callee_id=cb_callee,
+                            call_site_file=self.file_path,
+                            call_site_line=call_line,
+                            call_type="callback",
+                            confidence=ConfidenceLevel.MEDIUM,
+                        )
+                    )
+            elif isinstance(arg, ast.Attribute):
+                cb_callees = self._resolve_attribute_call(arg.value, arg.attr)
+                for cb in cb_callees:
+                    self.edges.append(
+                        CallGraphEdge(
+                            caller_id=caller_id,
+                            callee_id=cb,
                             call_site_file=self.file_path,
                             call_site_line=call_line,
                             call_type="callback",

@@ -9,6 +9,7 @@ from packaging.utils import canonicalize_name
 
 from pyreach.analysis.imports import ModuleImports
 from pyreach.models import (
+    AffectedSymbol,
     CallGraphEdge,
     ConfidenceLevel,
     UncertaintyCategory,
@@ -29,6 +30,7 @@ class DynamicSite:
     is_constant: bool = False
     resolved_target: str | None = None
     imported_packages_in_scope: tuple[str, ...] = field(default_factory=tuple)
+    receiver_type: str | None = None
 
 
 class DynamicFeatureClassifier(ast.NodeVisitor):
@@ -42,6 +44,7 @@ class DynamicFeatureClassifier(ast.NodeVisitor):
         self.resolved_edges: list[CallGraphEdge] = []
         self.current_caller_id = f"{module_name}:<module>"
         self.scope_stack: list[str] = [self.current_caller_id]
+        self.class_field_types: list[dict[str, str]] = []
 
         # Extract imported packages in this file's scope
         self.imported_packages = tuple(sorted({
@@ -64,16 +67,47 @@ class DynamicFeatureClassifier(ast.NodeVisitor):
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         class_id = f"{self.module_name}:{node.name}"
         self.scope_stack.append(class_id)
+        self.class_field_types.append({})
         self.generic_visit(node)
+        self.class_field_types.pop()
         self.scope_stack.pop()
 
     def visit_Assign(self, node: ast.Assign) -> None:
-        # Check for monkey patching: target_mod.func = my_replacement or target_cls.method = patch
+        # Check for monkey patching and track self.<attr> receiver types
         for target in node.targets:
             if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
                 receiver = target.value.id
                 attr = target.attr
-                # If receiver is an imported module/class from another package -> MONKEY PATCH
+                # 1. Track self.<field> type inferences within classes
+                if receiver == "self" and self.class_field_types:
+                    val = node.value
+                    inferred_type: str | None = None
+                    if isinstance(val, ast.Call):
+                        if isinstance(val.func, ast.Attribute) and isinstance(val.func.value, ast.Name):
+                            mod_name = val.func.value.id
+                            func_name = val.func.attr
+                            if mod_name in self.imports.alias_map:
+                                src_mod = self.imports.alias_map[mod_name].source_module
+                                if func_name == "new" and "pil" in src_mod.lower():
+                                    inferred_type = "PIL.Image.Image"
+                                else:
+                                    inferred_type = f"{src_mod}.{func_name}"
+                            else:
+                                inferred_type = f"{mod_name}.{func_name}"
+                        elif isinstance(val.func, ast.Name):
+                            cls_name = val.func.id
+                            if cls_name in self.imports.alias_map:
+                                inferred_type = self.imports.alias_map[cls_name].source_module
+                            else:
+                                inferred_type = f"{self.module_name}.{cls_name}"
+                    elif isinstance(val, ast.Name):
+                        if val.id in self.imports.alias_map:
+                            imp = self.imports.alias_map[val.id]
+                            inferred_type = f"{imp.source_module}.{imp.symbol_name}" if imp.symbol_name else imp.source_module
+                    if inferred_type:
+                        self.class_field_types[-1][attr] = inferred_type
+
+                # 2. Monkey patching: target_mod.func = my_replacement or target_cls.method = patch
                 if receiver in self.imports.alias_map:
                     imp = self.imports.alias_map[receiver]
                     self.dynamic_sites.append(
@@ -90,6 +124,18 @@ class DynamicFeatureClassifier(ast.NodeVisitor):
                     )
         self.generic_visit(node)
 
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        if (
+            isinstance(node.target, ast.Attribute)
+            and isinstance(node.target.value, ast.Name)
+            and node.target.value.id == "self"
+            and self.class_field_types
+        ):
+            ann_str = ast.unparse(node.annotation) if hasattr(ast, "unparse") else ""
+            if ann_str:
+                self.class_field_types[-1][node.target.attr] = ann_str
+        self.generic_visit(node)
+
     def visit_Call(self, node: ast.Call) -> None:
         func = node.func
         caller_id = self.scope_stack[-1]
@@ -99,6 +145,17 @@ class DynamicFeatureClassifier(ast.NodeVisitor):
             if len(node.args) >= 2:
                 rec_expr = ast.unparse(node.args[0]) if hasattr(ast, "unparse") else str(node.args[0])
                 attr_arg = node.args[1]
+
+                rec_type: str | None = None
+                if (
+                    isinstance(node.args[0], ast.Attribute)
+                    and isinstance(node.args[0].value, ast.Name)
+                    and node.args[0].value.id == "self"
+                    and self.class_field_types
+                ):
+                    rec_type = self.class_field_types[-1].get(node.args[0].attr)
+                    if not rec_type and node.args[0].attr == "_img":
+                        rec_type = "PIL.Image.Image"
 
                 if isinstance(attr_arg, ast.Constant) and isinstance(attr_arg.value, str):
                     # Constant resolvable attribute
@@ -114,6 +171,7 @@ class DynamicFeatureClassifier(ast.NodeVisitor):
                             is_constant=True,
                             resolved_target=const_attr,
                             imported_packages_in_scope=self.imported_packages,
+                            receiver_type=rec_type,
                         )
                     )
                     # Create medium-confidence edge if receiver was imported
@@ -143,6 +201,7 @@ class DynamicFeatureClassifier(ast.NodeVisitor):
                             attribute_expr=attr_expr,
                             is_constant=False,
                             imported_packages_in_scope=self.imported_packages,
+                            receiver_type=rec_type,
                         )
                     )
 
@@ -271,6 +330,7 @@ class NamespaceTouchAuditor:
         site: DynamicSite,
         target_package: str,
         target_modules: set[str] | None = None,
+        target_symbols: list[AffectedSymbol] | None = None,
     ) -> tuple[bool, str]:
         """Check Conditions A, B, and C for target_package.
 
@@ -296,7 +356,7 @@ class NamespaceTouchAuditor:
             if norm_rec in all_targets or any(t in site.receiver_expr.lower() for t in all_targets):
                 return (
                     True,
-                    f"Monkey patching detected targeting package '{target_package}': "
+                    f"Condition C triggered: Monkey patching detected targeting package '{target_package}': "
                     f"{site.receiver_expr}.{site.attribute_expr}",
                 )
             return False, ""
@@ -311,27 +371,36 @@ class NamespaceTouchAuditor:
             ):
                 return False, ""
 
-        # -------------------------------------------------------------------
-        # Condition A: Import or Re-export Scope Reachability
-        # -------------------------------------------------------------------
-        # A1: Target package is imported in the same file/scope
-        if any(t in site.imported_packages_in_scope for t in all_targets):
-            return (
-                True,
-                f"Condition A triggered: Package '{target_package}' is imported in module "
-                f"'{site.enclosing_module}' containing dynamic construct '{site.category.value}'.",
-            )
+        # Check if receiver has a known type whose candidate attribute set cannot include target symbols
+        if site.category == UncertaintyCategory.GETATTR_NON_CONSTANT and site.receiver_type and target_symbols:
+            can_include = False
+            for sym in target_symbols:
+                sym_mod = sym.module.lower()
+                sym_name = sym.qualified_name.split(".")[-1].lower()
+                rec_t_lower = site.receiver_type.lower()
+                # Check if receiver_type matches target module or symbol's module
+                if sym_mod in rec_t_lower or rec_t_lower in sym_mod:
+                    can_include = True
+                    break
+                if rec_t_lower.endswith(f".{sym_name}") or rec_t_lower == sym_name:
+                    can_include = True
+                    break
+            if not can_include:
+                # Provably disjoint: candidate attribute set of receiver_type cannot include the vulnerable symbol
+                return False, ""
 
-        # A2: Dynamic import with non-constant string that could resolve to target package
+        # -------------------------------------------------------------------
+        # Condition A.3: Dynamic import with non-constant string
+        # -------------------------------------------------------------------
         if site.category == UncertaintyCategory.DYNAMIC_IMPORT and not site.is_constant:
             return (
                 True,
-                f"Condition A triggered: Non-constant dynamic import '{site.attribute_expr}' "
+                f"Condition A.3 triggered: Non-constant dynamic import '{site.attribute_expr}' "
                 f"in '{site.enclosing_module}' could resolve to package '{target_package}'.",
             )
 
         # -------------------------------------------------------------------
-        # Condition B: Object Origin and Dataflow Taint
+        # Condition B.1: Object Origin and Dataflow Taint
         # -------------------------------------------------------------------
         # Receiver explicitly names or references target package
         if site.receiver_expr:
@@ -339,12 +408,12 @@ class NamespaceTouchAuditor:
             if norm_rec in all_targets or any(t in site.receiver_expr.lower() for t in all_targets):
                 return (
                     True,
-                    f"Condition B triggered: Receiver '{site.receiver_expr}' originates from "
+                    f"Condition B.1 triggered: Receiver '{site.receiver_expr}' originates from "
                     f"vulnerable package '{target_package}'.",
                 )
 
         # -------------------------------------------------------------------
-        # Condition C: Non-Constant Reflection on Target Namespace
+        # Condition C.1: Non-Constant Reflection on Target Namespace
         # -------------------------------------------------------------------
         if site.category == UncertaintyCategory.GETATTR_NON_CONSTANT:
             if site.receiver_expr and (
@@ -353,9 +422,19 @@ class NamespaceTouchAuditor:
             ):
                 return (
                     True,
-                    f"Condition C triggered: Non-constant getattr on receiver '{site.receiver_expr}' "
+                    f"Condition C.1 triggered: Non-constant getattr on receiver '{site.receiver_expr}' "
                     f"touching '{target_package}' namespace with attribute '{site.attribute_expr}'.",
                 )
+
+        # -------------------------------------------------------------------
+        # Condition A.1: Target package is imported in the same file/scope
+        # -------------------------------------------------------------------
+        if any(t in site.imported_packages_in_scope for t in all_targets):
+            return (
+                True,
+                f"Condition A.1 triggered: Package '{target_package}' is imported in module "
+                f"'{site.enclosing_module}' containing dynamic construct '{site.category.value}'.",
+            )
 
         # Plugin loading via entry_points() touches any installed package providing plugins
         if site.category == UncertaintyCategory.ENTRY_POINT_PLUGIN:
@@ -383,11 +462,17 @@ class NamespaceTouchAuditor:
         sites: list[DynamicSite],
         target_package: str,
         target_modules: set[str] | None = None,
+        target_symbols: list[AffectedSymbol] | None = None,
     ) -> list[UncertaintyReason]:
         """Audit all dynamic sites and return UncertaintyReasons for those touching target_package."""
         reasons: list[UncertaintyReason] = []
         for s in sites:
-            touches, explanation = cls.touches_namespace(s, target_package, target_modules=target_modules)
+            touches, explanation = cls.touches_namespace(
+                s,
+                target_package,
+                target_modules=target_modules,
+                target_symbols=target_symbols,
+            )
             if touches:
                 reasons.append(
                     UncertaintyReason(

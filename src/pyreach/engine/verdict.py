@@ -200,7 +200,10 @@ class VerdictEngine:
         if pkg_norm in self.call_graph.package_top_levels:
             target_mods.update(m.lower() for m in self.call_graph.package_top_levels[pkg_norm])
         touching_reasons = NamespaceTouchAuditor.audit_dynamic_sites_for_alert(
-            self.dynamic_sites, advisory.package_name, target_modules=target_mods
+            self.dynamic_sites,
+            advisory.package_name,
+            target_modules=target_mods,
+            target_symbols=advisory.extracted_symbols,
         )
         if touching_reasons:
             return Finding(

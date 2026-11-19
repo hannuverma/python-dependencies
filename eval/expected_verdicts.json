@@ -34,6 +34,8 @@
     },
     "dep_sources": {
       "urllib3": {
+        "src/urllib3/__init__.py": "",
+        "src/urllib3/util/__init__.py": "",
         "src/urllib3/util/url.py": "def parse_url(u):\n    return u"
       }
     },
@@ -53,6 +55,8 @@
     },
     "dep_sources": {
       "urllib3": {
+        "src/urllib3/__init__.py": "",
+        "src/urllib3/util/__init__.py": "",
         "src/urllib3/util/retry.py": "class Retry:\n    pass",
         "src/urllib3/util/url.py": "def parse_url(u):\n    return u"
       }
@@ -323,5 +327,100 @@
     "expected_verdict": "NOT_REACHABLE",
     "description": "Vulnerable function referenced only in dead/uncalled helper function.",
     "reasoning": "No path exists from main entry point; zero dynamic features touch vuln_pkg."
+  },
+  {
+    "name": "adv_12_fluent_builder_call",
+    "fixture_type": "inline",
+    "project_sources": {
+      "main.py": "import builder_pkg\ndef run():\n    b = builder_pkg.QueryBuilder().with_filter('id', 1).execute()\nif __name__ == '__main__':\n    run()"
+    },
+    "dep_sources": {
+      "builder_pkg": {
+        "builder_pkg/__init__.py": "class QueryBuilder:\n    def with_filter(self, k, v):\n        return self\n    def execute(self):\n        return vuln_target()\ndef vuln_target():\n    return 'executed_builder'"
+      }
+    },
+    "advisory_id": "GHSA-adv-12",
+    "package": "builder_pkg",
+    "target_module": "builder_pkg",
+    "target_symbol": "builder_pkg.vuln_target",
+    "expected_verdict": "REACHABLE",
+    "description": "Fluent builder method chaining executes vulnerable function at runtime.",
+    "reasoning": "QueryBuilder().execute() calls vuln_target(); verified executed by runtime tracer."
+  },
+  {
+    "name": "adv_13_generator_iteration_call",
+    "fixture_type": "inline",
+    "project_sources": {
+      "main.py": "import gen_pkg\ndef run():\n    items = list(gen_pkg.data_stream())\nif __name__ == '__main__':\n    run()"
+    },
+    "dep_sources": {
+      "gen_pkg": {
+        "gen_pkg/__init__.py": "def data_stream():\n    yield vuln_generator_worker()\ndef vuln_generator_worker():\n    return 'stream_item'"
+      }
+    },
+    "advisory_id": "GHSA-adv-13",
+    "package": "gen_pkg",
+    "target_module": "gen_pkg",
+    "target_symbol": "gen_pkg.vuln_generator_worker",
+    "expected_verdict": "REACHABLE",
+    "description": "Generator iteration executes vulnerable helper at runtime.",
+    "reasoning": "list(gen_pkg.data_stream()) consumes generator and executes vuln_generator_worker(); verified by runtime tracer."
+  },
+  {
+    "name": "adv_14_context_manager_call",
+    "fixture_type": "inline",
+    "project_sources": {
+      "main.py": "import ctx_pkg\ndef run():\n    with ctx_pkg.ManagedResource():\n        pass\nif __name__ == '__main__':\n    run()"
+    },
+    "dep_sources": {
+      "ctx_pkg": {
+        "ctx_pkg/__init__.py": "class ManagedResource:\n    def __enter__(self):\n        vuln_resource_init()\n        return self\n    def __exit__(self, exc_type, exc_val, exc_tb):\n        pass\ndef vuln_resource_init():\n    return 'initialized'"
+      }
+    },
+    "advisory_id": "GHSA-adv-14",
+    "package": "ctx_pkg",
+    "target_module": "ctx_pkg",
+    "target_symbol": "ctx_pkg.vuln_resource_init",
+    "expected_verdict": "REACHABLE",
+    "description": "Context manager __enter__ executes vulnerable setup at runtime.",
+    "reasoning": "with ctx_pkg.ManagedResource() invokes __enter__() which calls vuln_resource_init(); verified by runtime tracer."
+  },
+  {
+    "name": "adv_15_dynamic_getattr_executed_call",
+    "fixture_type": "inline",
+    "project_sources": {
+      "main.py": "import dynamic_pkg\ndef run():\n    fn_name = 'vuln_dynamic_op'\n    fn = getattr(dynamic_pkg, fn_name)\n    fn()\nif __name__ == '__main__':\n    run()"
+    },
+    "dep_sources": {
+      "dynamic_pkg": {
+        "dynamic_pkg/__init__.py": "def vuln_dynamic_op():\n    return 'dynamically_called'"
+      }
+    },
+    "advisory_id": "GHSA-adv-15",
+    "package": "dynamic_pkg",
+    "target_module": "dynamic_pkg",
+    "target_symbol": "dynamic_pkg.vuln_dynamic_op",
+    "expected_verdict": "UNCERTAIN",
+    "description": "Non-constant getattr dynamically executes vulnerable function at runtime.",
+    "reasoning": "Vulnerable function executes at runtime; static analysis cannot prove path statically and flags Condition C UNCERTAIN (sound firewall preventing false negative)."
+  },
+  {
+    "name": "adv_16_higher_order_dispatch_call",
+    "fixture_type": "inline",
+    "project_sources": {
+      "main.py": "import dispatch_pkg\ndef run():\n    dispatch_pkg.dispatch(dispatch_pkg.vuln_callback)\nif __name__ == '__main__':\n    run()"
+    },
+    "dep_sources": {
+      "dispatch_pkg": {
+        "dispatch_pkg/__init__.py": "def dispatch(callback):\n    return callback()\ndef vuln_callback():\n    return 'callback_executed'"
+      }
+    },
+    "advisory_id": "GHSA-adv-16",
+    "package": "dispatch_pkg",
+    "target_module": "dispatch_pkg",
+    "target_symbol": "dispatch_pkg.vuln_callback",
+    "expected_verdict": "REACHABLE",
+    "description": "Higher-order function callback passed and executed at runtime.",
+    "reasoning": "dispatch() executes passed callback vuln_callback(); verified by runtime tracer."
   }
 ]

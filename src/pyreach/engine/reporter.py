@@ -23,11 +23,11 @@ def render_terminal_report(findings: list[Finding], console: Console | None = No
         show_lines=True,
         header_style="bold cyan",
     )
-    table.add_column("Advisory ID", style="bold cyan", no_wrap=True, min_width=22)
-    table.add_column("Package", style="magenta", no_wrap=True, min_width=12)
-    table.add_column("Version", style="blue", no_wrap=True, min_width=10)
-    table.add_column("Verdict", justify="center", no_wrap=True, min_width=16)
-    table.add_column("Confidence", justify="center", no_wrap=True, min_width=12)
+    table.add_column("Advisory ID", style="bold cyan", no_wrap=True, min_width=20)
+    table.add_column("Package", style="magenta", no_wrap=True, min_width=10)
+    table.add_column("Version", style="blue", no_wrap=True, min_width=8)
+    table.add_column("Verdict", justify="center", no_wrap=True, min_width=14)
+    table.add_column("Confidence", justify="center", no_wrap=True, min_width=10)
 
     for f in findings:
         if f.verdict == Verdict.REACHABLE:
