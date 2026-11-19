@@ -116,6 +116,10 @@ class CallGraphBuilder:
         # -------------------------------------------------------------------
         # Phase 2: Visit all parsed modules to build nodes, classes, and call edges
         # -------------------------------------------------------------------
+        all_module_imports = {
+            m_name: m_imports for (_, m_name, _, _, m_imports, _) in parsed_modules.values()
+        }
+
         for (
             key,
             (pkg_str, m_name, file_p, parsed_tree, m_imports, dep_flag),
@@ -127,6 +131,7 @@ class CallGraphBuilder:
                 imports=m_imports,
                 is_dependency=dep_flag,
                 all_classes=self.all_classes,
+                all_module_imports=all_module_imports,
             )
             visitor.local_definitions = module_local_defs.get(key, set())
             visitor.visit(parsed_tree)

@@ -1,0 +1,92 @@
+name: pyreach PR Vulnerability Reachability Triage
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+
+jobs:
+  reachability-scan:
+    name: Dependency Vulnerability Reachability Scan
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || contains(github.event.comment.body, '@pyreach')
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install pyreach
+        run: |
+          python -m pip install --upgrade pip
+          pip install .
+
+      - name: Run Hermetic Reachability Scan
+        id: scan
+        run: |
+          mkdir -p ./pyreach-out
+          # Query active OSV advisories affecting requirements.txt
+          pyreach scan . --mode app --out ./pyreach-out || true
+
+      - name: Upload OpenVEX Statements
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: openvex-statements
+          path: ./pyreach-out/openvex.json
+
+      - name: Upload Findings Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pyreach-findings
+          path: ./pyreach-out/findings.json
+
+      - name: Post PR Reachability Summary Comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const findingsPath = './pyreach-out/findings.json';
+            if (!fs.existsSync(findingsPath)) {
+              console.log("No findings generated.");
+              return;
+            }
+            const data = JSON.parse(fs.readFileSync(findingsPath, 'utf8'));
+            if (data.length === 0) {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: "### ✅ pyreach Security Scan: No vulnerable dependencies detected."
+              });
+              return;
+            }
+
+            let body = "## 🛡️ pyreach Vulnerability Reachability Analysis\n\n";
+            body += "| Advisory ID | Package | Version | Verdict | Confidence |\n";
+            body += "| :--- | :--- | :--- | :--- | :--- |\n";
+            for (const f of data) {
+              const icon = f.verdict === 'REACHABLE' ? '🔴' : (f.verdict === 'NOT_REACHABLE' ? '🟢' : '🟡');
+              body += `| ${f.advisory_id} | ${f.package_name} | ${f.installed_version} | ${icon} **${f.verdict}** | ${f.confidence.toUpperCase()} |\n`;
+            }
+            body += "\n---\n*Provably unreachable findings have generated OpenVEX statements attached as workflow artifacts.*\n";
+            body += "*Comment `@pyreach <question>` on this PR to ask the security triage agent for evidence paths.*";
+
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });

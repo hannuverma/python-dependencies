@@ -279,16 +279,10 @@ class NamespaceTouchAuditor:
         norm_target = canonicalize_name(target_package)
         all_targets = {norm_target, norm_target.replace("-", "_")}
         if target_modules:
-            all_targets.update(canonicalize_name(m) for m in target_modules)
-            all_targets.update(m.lower().replace("-", "_") for m in target_modules)
-        well_known = {
-            "pillow": {"pil"},
-            "pyyaml": {"yaml"},
-            "beautifulsoup4": {"bs4"},
-            "scikit-learn": {"sklearn"},
-        }
-        if norm_target in well_known:
-            all_targets.update(well_known[norm_target])
+            for m in target_modules:
+                clean_m = m.lower().replace("-", "_")
+                all_targets.add(clean_m)
+                all_targets.add(canonicalize_name(m))
 
         # If site was cleanly resolved to a constant safe target, it doesn't cause uncertainty
         if site.is_constant and site.category not in (
@@ -306,6 +300,16 @@ class NamespaceTouchAuditor:
                     f"{site.receiver_expr}.{site.attribute_expr}",
                 )
             return False, ""
+
+        # If receiver is an explicit unrelated module imported in scope (e.g. 'sys', 'math'),
+        # calls on it are provably directed away from target package.
+        if site.receiver_expr:
+            rec_base = canonicalize_name(site.receiver_expr.split(".")[0])
+            rec_lower = site.receiver_expr.lower()
+            if rec_base in site.imported_packages_in_scope and not (
+                rec_base in all_targets or any(t in rec_lower for t in all_targets)
+            ):
+                return False, ""
 
         # -------------------------------------------------------------------
         # Condition A: Import or Re-export Scope Reachability

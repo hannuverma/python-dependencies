@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +26,7 @@ class CachedPackageSummary:
     edges: list[dict[str, Any]]
     native_modules: list[str]
     package_stats: dict[str, Any]
+    top_level_modules: list[str] = field(default_factory=list)
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))

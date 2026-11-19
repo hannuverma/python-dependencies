@@ -320,6 +320,10 @@ class CallGraph(BaseModel):
         default_factory=set,
         description="Set of dotted module names that are compiled native extensions (.so/.pyd)",
     )
+    package_top_levels: dict[str, set[str]] = Field(
+        default_factory=dict,
+        description="PEP 503 normalized package name -> set of importable top-level module names from wheel top_level.txt/RECORD",
+    )
 
     def add_node(self, node: CallGraphNode) -> None:
         self.nodes[node.node_id] = node

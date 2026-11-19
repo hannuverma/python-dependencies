@@ -33,6 +33,7 @@ class ModuleCallGraphVisitor(ast.NodeVisitor):
         imports: ModuleImports,
         is_dependency: bool = False,
         all_classes: dict[str, ClassHierarchyInfo] | None = None,
+        all_module_imports: dict[str, ModuleImports] | None = None,
     ) -> None:
         self.package_name = package_name
         self.module_name = module_name
@@ -40,6 +41,7 @@ class ModuleCallGraphVisitor(ast.NodeVisitor):
         self.imports = imports
         self.is_dependency = is_dependency
         self.all_classes = all_classes or {}
+        self.all_module_imports = all_module_imports or {}
         self.local_definitions: set[str] = set()
 
         self.nodes: dict[str, CallGraphNode] = {}
@@ -185,6 +187,57 @@ class ModuleCallGraphVisitor(ast.NodeVisitor):
             is_dependency=self.is_dependency,
         )
 
+        # Handle decorators: in Python, decorators execute at definition time in parent_id
+        if node.decorator_list:
+            for dec in node.decorator_list:
+                dec_id = None
+                if isinstance(dec, ast.Name):
+                    dec_id = self._resolve_direct_call(dec.id)
+                elif isinstance(dec, ast.Attribute):
+                    callees = self._resolve_attribute_call(dec.value, dec.attr)
+                    if callees:
+                        dec_id = callees[0]
+                elif isinstance(dec, ast.Call):
+                    if isinstance(dec.func, ast.Name):
+                        dec_id = self._resolve_direct_call(dec.func.id)
+                    elif isinstance(dec.func, ast.Attribute):
+                        callees = self._resolve_attribute_call(dec.func.value, dec.func.attr)
+                        if callees:
+                            dec_id = callees[0]
+
+                if dec_id:
+                    self.edges.append(
+                        CallGraphEdge(
+                            caller_id=parent_id,
+                            callee_id=dec_id,
+                            call_site_file=self.file_path,
+                            call_site_line=node.lineno,
+                            call_type="decorator",
+                            confidence=ConfidenceLevel.HIGH,
+                        )
+                    )
+                    self.edges.append(
+                        CallGraphEdge(
+                            caller_id=dec_id,
+                            callee_id=node_id,
+                            call_site_file=self.file_path,
+                            call_site_line=node.lineno,
+                            call_type="callback",
+                            confidence=ConfidenceLevel.HIGH,
+                        )
+                    )
+                else:
+                    self.edges.append(
+                        CallGraphEdge(
+                            caller_id=parent_id,
+                            callee_id=node_id,
+                            call_site_file=self.file_path,
+                            call_site_line=node.lineno,
+                            call_type="callback",
+                            confidence=ConfidenceLevel.MEDIUM,
+                        )
+                    )
+
         self.scope_stack.append(node_id)
         self.generic_visit(node)
         self.scope_stack.pop()
@@ -289,6 +342,23 @@ class ModuleCallGraphVisitor(ast.NodeVisitor):
             imp = self.imports.alias_map[name]
             target_mod = imp.source_module
             target_sym = imp.symbol_name or name
+
+            # Follow transitive re-exports across packages and modules
+            if self.all_module_imports:
+                visited_aliases: set[str] = set()
+                while target_mod in self.all_module_imports:
+                    alias_key = f"{target_mod}:{target_sym}"
+                    if alias_key in visited_aliases:
+                        break
+                    visited_aliases.add(alias_key)
+                    mod_imp = self.all_module_imports[target_mod]
+                    if target_sym in mod_imp.alias_map:
+                        reexport = mod_imp.alias_map[target_sym]
+                        target_mod = reexport.source_module
+                        target_sym = reexport.symbol_name or target_sym
+                    else:
+                        break
+
             return f"{target_mod}:{target_sym}"
 
         return None

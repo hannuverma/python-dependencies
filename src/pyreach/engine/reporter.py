@@ -14,17 +14,20 @@ from pyreach.models import Finding, Verdict
 
 
 def render_terminal_report(findings: list[Finding], console: Console | None = None) -> None:
-    """Render colored summary tables, call trees, and uncertainty details to the terminal."""
+    """Render clean, un-truncated summary tables and detailed panels to the terminal."""
     con = console or Console()
 
-    # 1. Summary Table
-    table = Table(title="pyreach Vulnerability Reachability Analysis", show_lines=True)
-    table.add_column("Advisory ID", style="cyan", no_wrap=True)
-    table.add_column("Package", style="magenta")
-    table.add_column("Version", style="blue")
-    table.add_column("Verdict", justify="center")
-    table.add_column("Confidence", justify="center")
-    table.add_column("Summary")
+    # 1. Clean Summary Table (no truncated columns)
+    table = Table(
+        title="pyreach Vulnerability Reachability Analysis",
+        show_lines=True,
+        header_style="bold cyan",
+    )
+    table.add_column("Advisory ID", style="bold cyan", no_wrap=True, min_width=22)
+    table.add_column("Package", style="magenta", no_wrap=True, min_width=12)
+    table.add_column("Version", style="blue", no_wrap=True, min_width=10)
+    table.add_column("Verdict", justify="center", no_wrap=True, min_width=16)
+    table.add_column("Confidence", justify="center", no_wrap=True, min_width=12)
 
     for f in findings:
         if f.verdict == Verdict.REACHABLE:
@@ -34,7 +37,11 @@ def render_terminal_report(findings: list[Finding], console: Console | None = No
         else:
             verdict_text = "[bold yellow]UNCERTAIN[/]"
 
-        conf_color = "green" if f.confidence.value == "high" else ("yellow" if f.confidence.value == "medium" else "red")
+        conf_color = (
+            "green"
+            if f.confidence.value == "high"
+            else ("yellow" if f.confidence.value == "medium" else "red")
+        )
         conf_text = f"[{conf_color}]{f.confidence.value.upper()}[/]"
 
         table.add_row(
@@ -43,38 +50,70 @@ def render_terminal_report(findings: list[Finding], console: Console | None = No
             f.installed_version,
             verdict_text,
             conf_text,
-            f.summary,
         )
 
     con.print(table)
     con.print()
 
-    # 2. Detailed Evidence for Reachable Findings
-    reachable_findings = [f for f in findings if f.verdict == Verdict.REACHABLE]
-    if reachable_findings:
-        con.print("[bold red]Reachable Vulnerability Evidence Call Paths:[/]")
-        for f in reachable_findings:
-            tree = Tree(f"[bold cyan]{f.advisory_id}[/] in [magenta]{f.package_name}=={f.installed_version}[/]")
+    # 2. Detailed Findings Panels (Summary & Evidence)
+    for f in findings:
+        if f.verdict == Verdict.REACHABLE:
+            tree = Tree(
+                f"[bold cyan]{f.advisory_id}[/] in [magenta]{f.package_name}=={f.installed_version}[/]"
+            )
             curr = tree
             for i, hop in enumerate(f.call_path, 1):
                 snippet_info = f" [dim]({hop.snippet.strip()})[/]" if hop.snippet else ""
                 hop_node = curr.add(
-                    f"[bold yellow]Hop {i}:[/] [white]{hop.symbol}[/] at [dim]{hop.file_path}:{hop.line_number}[/] ({hop.call_type}){snippet_info}"
+                    f"[bold yellow]Hop {i}:[/] [white]{hop.symbol}[/] at "
+                    f"[dim]{hop.file_path}:{hop.line_number}[/] ({hop.call_type}){snippet_info}"
                 )
                 curr = hop_node
-            con.print(Panel(tree, border_style="red"))
+            con.print(
+                Panel(
+                    tree,
+                    title=f"[bold red]Reachable Evidence Call Path:[/] {f.advisory_id} ({f.package_name})",
+                    subtitle=f.summary,
+                    border_style="red",
+                )
+            )
             con.print()
 
-    # 3. Detailed Uncertainty Breakdown
-    uncertain_findings = [f for f in findings if f.verdict == Verdict.UNCERTAIN]
-    if uncertain_findings:
-        con.print("[bold yellow]Uncertain Findings Breakdown (Soundness Guarded):[/]")
-        for f in uncertain_findings:
-            reasons_text = []
+        elif f.verdict == Verdict.NOT_REACHABLE:
+            content = (
+                f"[bold green]VERDICT: NOT_REACHABLE[/] (Confidence: [green]{f.confidence.value.upper()}[/])\n\n"
+                f"[white]{f.summary}[/]\n\n"
+                "[dim]• OpenVEX status:[/] [bold]not_affected[/]\n"
+                "[dim]• Justification:[/] [bold]vulnerable_code_not_in_execute_path[/]"
+            )
+            con.print(
+                Panel(
+                    content,
+                    title=f"[bold green]Provably Not Reachable:[/] {f.advisory_id} ({f.package_name})",
+                    border_style="green",
+                )
+            )
+            con.print()
+
+        else:
+            reasons_lines = []
             for r in f.uncertainty_reasons:
-                reasons_text.append(f"• [[bold yellow]{r.category.value}[/]] at [dim]{r.location}[/]: {r.details}")
-            body = "\n".join(reasons_text) if reasons_text else f.summary
-            con.print(Panel(body, title=f"{f.advisory_id} ({f.package_name})", border_style="yellow"))
+                reasons_lines.append(
+                    f"• [[bold yellow]{r.category.value}[/]] at [dim]{r.location}[/]: {r.details}"
+                )
+            reasons_text = "\n".join(reasons_lines) if reasons_lines else f.summary
+            content = (
+                f"[bold yellow]VERDICT: UNCERTAIN[/] (Confidence: [{conf_color}]{f.confidence.value.upper()}[/])\n\n"
+                f"[white]{f.summary}[/]\n\n"
+                f"[bold underline]Uncertainty Reasons (Soundness Guarded):[/]\n{reasons_text}"
+            )
+            con.print(
+                Panel(
+                    content,
+                    title=f"[bold yellow]Uncertain Finding:[/] {f.advisory_id} ({f.package_name})",
+                    border_style="yellow",
+                )
+            )
             con.print()
 
 

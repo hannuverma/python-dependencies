@@ -23,6 +23,7 @@ from pyreach.isolation.cache import CachedPackageSummary, PackageSummaryCache
 from pyreach.isolation.manifest_parser import parse_project_manifests
 from pyreach.isolation.pypi_client import HTTPPyPIClient
 from pyreach.isolation.safe_archive import extract_tar_safely, extract_zip_safely
+from pyreach.isolation.wheel_metadata import discover_wheel_top_level_modules
 from pyreach.models import Advisory, AnalysisMode, Finding
 
 app = typer.Typer(
@@ -124,6 +125,7 @@ def scan(
     # 4. Acquire pinned dependencies and resolve advisory symbols
     dependency_sources: dict[str, dict[str, str]] = {}
     native_modules: set[str] = set()
+    package_top_levels: dict[str, set[str]] = {}
     pypi_client = HTTPPyPIClient()
     cache_root = Path.home() / ".cache" / "pyreach"
     dl_dir = cache_root / "downloads"
@@ -138,16 +140,19 @@ def scan(
         archive_file: Path | None = None
         if not target_extract.exists():
             try:
+                console.print(f"[cyan]📦 Downloading {norm_pkg_name}=={pkg.version} from PyPI...[/cyan]")
                 archive_file = pypi_client.download_package(
                     package=norm_pkg_name,
                     version=pkg.version,
                     dest_dir=dl_dir,
                     prefer_wheel=True,
                 )
+                console.print(f"[cyan]📂 Extracting {archive_file.name} safely into sandbox cache...[/cyan]")
                 if archive_file.suffix in (".whl", ".zip"):
                     extract_zip_safely(archive_file, target_extract)
                 else:
                     extract_tar_safely(archive_file, target_extract)
+                console.print(f"[cyan]🔍 Parsing and indexing {norm_pkg_name} source ASTs...[/cyan]")
             except Exception as e:
                 console.print(f"[bold yellow]Warning:[/] Could not acquire package '{pkg.name}=={pkg.version}' from PyPI: {e}")
                 continue
@@ -162,6 +167,7 @@ def scan(
         if cached:
             console.print(f"[dim]⚡ Package summary cache hit for {norm_pkg_name}=={pkg.version}[/dim]")
             native_modules.update(cached.native_modules)
+            package_top_levels[norm_pkg_name] = set(cached.top_level_modules)
 
         # Load extracted sources and native modules
         if target_extract.exists():
@@ -173,6 +179,12 @@ def scan(
                 except Exception:
                     continue
             dependency_sources[norm_pkg_name] = pkg_sources
+
+            # Discover top-level importable modules dynamically from wheel metadata
+            discovered_top_levels = discover_wheel_top_level_modules(target_extract)
+            package_top_levels[norm_pkg_name] = discovered_top_levels
+            if discovered_top_levels and not cached:
+                console.print(f"[dim]🔍 Discovered top-level import module(s) for {norm_pkg_name}: {', '.join(sorted(discovered_top_levels))}[/dim]")
 
             # Check for native extensions
             for nat_path in list(target_extract.rglob("*.so")) + list(target_extract.rglob("*.pyd")):
@@ -199,6 +211,7 @@ def scan(
                         edges=[],
                         native_modules=list(native_modules),
                         package_stats={},
+                        top_level_modules=list(discovered_top_levels),
                     ),
                 )
 
@@ -220,6 +233,7 @@ def scan(
         dependency_sources=dependency_sources,
     )
     cg.native_modules.update(native_modules)
+    cg.package_top_levels.update(package_top_levels)
 
     # 6. Detect entry points
     detector = EntryPointDetector(mode=analysis_mode)

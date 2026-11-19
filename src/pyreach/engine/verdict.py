@@ -197,6 +197,8 @@ class VerdictEngine:
             for node in self.call_graph.nodes.values()
             if canonicalize_name(node.package) == pkg_norm
         }
+        if pkg_norm in self.call_graph.package_top_levels:
+            target_mods.update(m.lower() for m in self.call_graph.package_top_levels[pkg_norm])
         touching_reasons = NamespaceTouchAuditor.audit_dynamic_sites_for_alert(
             self.dynamic_sites, advisory.package_name, target_modules=target_mods
         )

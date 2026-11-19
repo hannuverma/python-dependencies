@@ -5,7 +5,8 @@
     "advisory_id": "GHSA-3f63-hfp8-52jq",
     "package": "pillow",
     "expected_verdict": "REACHABLE",
-    "description": "App directly calls ImageMath.eval from main() execution path."
+    "description": "App directly calls ImageMath.eval from main() execution path.",
+    "reasoning": "Direct call from entry point main() to ImageMath.eval(); provably executed at runtime."
   },
   {
     "name": "case2_pillow_not_reachable",
@@ -13,7 +14,8 @@
     "advisory_id": "GHSA-3f63-hfp8-52jq",
     "package": "pillow",
     "expected_verdict": "NOT_REACHABLE",
-    "description": "App defines ImageMath.eval call inside dead/uncalled function; main() only calls safe Image.new."
+    "description": "App defines ImageMath.eval call inside dead/uncalled function; main() only calls safe Image.new.",
+    "reasoning": "ImageMath.eval is only referenced in an uncalled helper; entry point main() executes safe Image.new(); zero dynamic features touch Pillow."
   },
   {
     "name": "case3_pillow_uncertain",
@@ -21,17 +23,18 @@
     "advisory_id": "GHSA-3f63-hfp8-52jq",
     "package": "pillow",
     "expected_verdict": "UNCERTAIN",
-    "description": "App calls getattr(ImageMath, os.environ.get('PIXEL_OP', 'eval')), touching Pillow namespace with dynamic attribute."
+    "description": "App calls getattr(ImageMath, os.environ.get('PIXEL_OP', 'eval')), touching Pillow namespace with dynamic attribute.",
+    "reasoning": "Non-constant getattr on receiver ImageMath touches Pillow namespace; static analysis cannot prove unreachability."
   },
   {
     "name": "fixture_urllib3_direct_call",
     "fixture_type": "inline",
     "project_sources": {
-      "main.py": "import urllib3.util.url\ndef run(): urllib3.util.url.parse_url('https://example.com')\nif __name__ == '__main__': run()"
+      "main.py": "import urllib3.util.url\ndef run():\n    urllib3.util.url.parse_url('https://example.com')\nif __name__ == '__main__':\n    run()"
     },
     "dep_sources": {
       "urllib3": {
-        "src/urllib3/util/url.py": "def parse_url(u): return u"
+        "src/urllib3/util/url.py": "def parse_url(u):\n    return u"
       }
     },
     "advisory_id": "GHSA-q2q7-5pp4-w6pg",
@@ -39,18 +42,19 @@
     "target_module": "urllib3.util.url",
     "target_symbol": "urllib3.util.url.parse_url",
     "expected_verdict": "REACHABLE",
-    "description": "Direct call to vulnerable parse_url in urllib3."
+    "description": "Direct call to vulnerable parse_url in urllib3.",
+    "reasoning": "Direct call from main entry point to parse_url()."
   },
   {
     "name": "fixture_urllib3_not_called",
     "fixture_type": "inline",
     "project_sources": {
-      "main.py": "import urllib3.util.retry\ndef run(): return urllib3.util.retry.Retry()\nif __name__ == '__main__': run()"
+      "main.py": "import urllib3.util.retry\ndef run():\n    return urllib3.util.retry.Retry()\nif __name__ == '__main__':\n    run()"
     },
     "dep_sources": {
       "urllib3": {
-        "src/urllib3/util/retry.py": "class Retry: pass",
-        "src/urllib3/util/url.py": "def parse_url(u): return u"
+        "src/urllib3/util/retry.py": "class Retry:\n    pass",
+        "src/urllib3/util/url.py": "def parse_url(u):\n    return u"
       }
     },
     "advisory_id": "GHSA-q2q7-5pp4-w6pg",
@@ -58,17 +62,18 @@
     "target_module": "urllib3.util.url",
     "target_symbol": "urllib3.util.url.parse_url",
     "expected_verdict": "NOT_REACHABLE",
-    "description": "App imports Retry but never calls parse_url; provably not reachable."
+    "description": "App imports Retry but never calls parse_url; provably not reachable.",
+    "reasoning": "parse_url is never called and not in the call tree of Retry; zero dynamic features touch urllib3."
   },
   {
     "name": "fixture_unrecognized_framework",
     "fixture_type": "inline",
     "project_sources": {
-      "server.py": "import falcon\napp = falcon.App()\ndef on_get(req, resp): pass"
+      "server.py": "import falcon\napp = falcon.App()\ndef on_get(req, resp):\n    pass"
     },
     "dep_sources": {
       "safe-lib": {
-        "safe_lib/__init__.py": "def do_work(): pass"
+        "safe_lib/__init__.py": "def do_work():\n    pass"
       }
     },
     "advisory_id": "GHSA-fake-falcon",
@@ -76,17 +81,18 @@
     "target_module": "safe_lib",
     "target_symbol": "safe_lib.do_work",
     "expected_verdict": "UNCERTAIN",
-    "description": "Unrecognized web framework (Falcon) triggers entry point uncertainty."
+    "description": "Unrecognized web framework (Falcon) triggers entry point uncertainty.",
+    "reasoning": "Falcon routes cannot be indexed confidently, setting entry_points_complete=False -> UNCERTAIN."
   },
   {
     "name": "fixture_c_extension_native_symbol",
     "fixture_type": "inline",
     "project_sources": {
-      "main.py": "import PIL.Image\ndef run(): pass\nif __name__ == '__main__': run()"
+      "main.py": "import PIL.Image\ndef run():\n    pass\nif __name__ == '__main__':\n    run()"
     },
     "dep_sources": {
       "pillow": {
-        "PIL/Image.py": "def open(fp): pass"
+        "PIL/Image.py": "def open(fp):\n    pass"
       }
     },
     "native_modules": ["PIL._imaging"],
@@ -95,6 +101,227 @@
     "target_module": "PIL._imaging",
     "target_symbol": "PIL._imaging.font_getsize",
     "expected_verdict": "UNCERTAIN",
-    "description": "Target symbol implemented in compiled C extension (.so/.pyd)."
+    "description": "Target symbol implemented in compiled C extension (.so/.pyd).",
+    "reasoning": "Rule 6a: Target symbol resides in native compiled code; AST analysis cannot prove unreachability."
+  },
+  {
+    "name": "adv_1_unrelated_getattr_same_module",
+    "fixture_type": "inline",
+    "project_sources": {
+      "main.py": "import sys\nimport vuln_pkg\n\nx = getattr(sys, 'version')\n\ndef run():\n    vuln_pkg.safe_call()\n\nif __name__ == '__main__':\n    run()"
+    },
+    "dep_sources": {
+      "vuln_pkg": {
+        "vuln_pkg/__init__.py": "def safe_call():\n    return 1\n\ndef dangerous_call():\n    return 2"
+      }
+    },
+    "advisory_id": "GHSA-adv-1",
+    "package": "vuln_pkg",
+    "target_module": "vuln_pkg",
+    "target_symbol": "vuln_pkg.dangerous_call",
+    "expected_verdict": "NOT_REACHABLE",
+    "description": "Unrelated getattr on sys does not poison the reachability verdict for vuln_pkg.",
+    "reasoning": "Receiver sys is a known disjoint standard library module; dangerous_call is never invoked; provably NOT_REACHABLE."
+  },
+  {
+    "name": "adv_2_subclass_override",
+    "fixture_type": "inline",
+    "project_sources": {
+      "main.py": "import base_lib\n\nclass Derived(base_lib.Base):\n    def hook(self):\n        return base_lib.vuln_func()\n\ndef run():\n    obj: base_lib.Base = Derived()\n    obj.hook()\n\nif __name__ == '__main__':\n    run()"
+    },
+    "dep_sources": {
+      "base_lib": {
+        "base_lib/__init__.py": "class Base:\n    def hook(self):\n        pass\n\ndef vuln_func():\n    return 42"
+      }
+    },
+    "advisory_id": "GHSA-adv-2",
+    "package": "base_lib",
+    "target_module": "base_lib",
+    "target_symbol": "base_lib.vuln_func",
+    "expected_verdict": "REACHABLE",
+    "description": "Polymorphic subclass method override calls vulnerable function.",
+    "reasoning": "Derived overrides Base.hook(), which invokes vuln_func(). CHA discovers polymorphic call edge."
+  },
+  {
+    "name": "adv_3_entry_points_plugin",
+    "fixture_type": "inline",
+    "project_sources": {
+      "main.py": "from importlib.metadata import entry_points\nimport target_lib\n\ndef run():\n    plugins = entry_points(group='app.plugins')\n    for p in plugins:\n        p.load()()\n\nif __name__ == '__main__':\n    run()"
+    },
+    "dep_sources": {
+      "target_lib": {
+        "target_lib/__init__.py": "def vuln_eval():\n    return 1"
+      }
+    },
+    "advisory_id": "GHSA-adv-3",
+    "package": "target_lib",
+    "target_module": "target_lib",
+    "target_symbol": "target_lib.vuln_eval",
+    "expected_verdict": "UNCERTAIN",
+    "description": "Dynamic plugin discovery via entry_points() touches installed plugin namespaces.",
+    "reasoning": "entry_points(group=...) dynamically imports external code; static analysis cannot rule out target_lib."
+  },
+  {
+    "name": "adv_4_import_time_call",
+    "fixture_type": "inline",
+    "project_sources": {
+      "main.py": "import helper\n\ndef run():\n    pass\n\nif __name__ == '__main__':\n    run()",
+      "helper.py": "import target_pkg\n\ntarget_pkg.init_vuln()"
+    },
+    "dep_sources": {
+      "target_pkg": {
+        "target_pkg/__init__.py": "def init_vuln():\n    return 'executed'"
+      }
+    },
+    "advisory_id": "GHSA-adv-4",
+    "package": "target_pkg",
+    "target_module": "target_pkg",
+    "target_symbol": "target_pkg.init_vuln",
+    "expected_verdict": "REACHABLE",
+    "description": "Module import triggers top-level execution calling vulnerable function.",
+    "reasoning": "import helper executes helper:<module_init>, which calls target_pkg.init_vuln at import time."
+  },
+  {
+    "name": "adv_5_reexport_through_another_package",
+    "fixture_type": "inline",
+    "project_sources": {
+      "main.py": "from reexporter import aliased_vuln\n\ndef run():\n    aliased_vuln()\n\nif __name__ == '__main__':\n    run()"
+    },
+    "dep_sources": {
+      "reexporter": {
+        "reexporter/__init__.py": "from vuln_dep import raw_vuln as aliased_vuln"
+      },
+      "vuln_dep": {
+        "vuln_dep/__init__.py": "def raw_vuln():\n    return 'reached'"
+      }
+    },
+    "advisory_id": "GHSA-adv-5",
+    "package": "vuln_dep",
+    "target_module": "vuln_dep",
+    "target_symbol": "vuln_dep.raw_vuln",
+    "expected_verdict": "REACHABLE",
+    "description": "Symbol re-exported and aliased through intermediate package.",
+    "reasoning": "Import resolver follows from reexporter import aliased_vuln back to vuln_dep.raw_vuln."
+  },
+  {
+    "name": "adv_6_decorator_callback_registration",
+    "fixture_type": "inline",
+    "project_sources": {
+      "main.py": "import vuln_lib\nregistry = []\n\ndef register(fn):\n    registry.append(fn)\n    return fn\n\n@register\ndef worker():\n    vuln_lib.exploit_func()\n\ndef run():\n    for fn in registry:\n        fn()\n\nif __name__ == '__main__':\n    run()"
+    },
+    "dep_sources": {
+      "vuln_lib": {
+        "vuln_lib/__init__.py": "def exploit_func():\n    return 'exploited'"
+      }
+    },
+    "advisory_id": "GHSA-adv-6",
+    "package": "vuln_lib",
+    "target_module": "vuln_lib",
+    "target_symbol": "vuln_lib.exploit_func",
+    "expected_verdict": "REACHABLE",
+    "description": "Callback decorated function registered and invoked.",
+    "reasoning": "Decorator call and function registration creates traceable call edge to worker and exploit_func."
+  },
+  {
+    "name": "adv_7_package_fails_to_parse",
+    "fixture_type": "inline",
+    "project_sources": {
+      "main.py": "import broken_lib\n\ndef run():\n    pass\n\nif __name__ == '__main__':\n    run()"
+    },
+    "dep_sources": {
+      "broken_lib": {
+        "broken_lib/__init__.py": "def good():\n    pass",
+        "broken_lib/bad_syntax.py": "def broken("
+      }
+    },
+    "advisory_id": "GHSA-adv-7",
+    "package": "broken_lib",
+    "target_module": "broken_lib",
+    "target_symbol": "broken_lib.good",
+    "expected_verdict": "UNCERTAIN",
+    "description": "Dependency package contains invalid syntax causing files_failed > 0.",
+    "reasoning": "Soundness rule: any failed file in dependency graph forces UNCERTAIN (parse_error)."
+  },
+  {
+    "name": "adv_8_transitive_call_chain",
+    "fixture_type": "inline",
+    "project_sources": {
+      "main.py": "import lib_a\n\ndef run():\n    lib_a.step_a()\n\nif __name__ == '__main__':\n    run()"
+    },
+    "dep_sources": {
+      "lib_a": {
+        "lib_a/__init__.py": "import lib_b\ndef step_a():\n    lib_b.step_b()"
+      },
+      "lib_b": {
+        "lib_b/__init__.py": "import vuln_c\ndef step_b():\n    vuln_c.target_vuln()"
+      },
+      "vuln_c": {
+        "vuln_c/__init__.py": "def target_vuln():\n    return 123"
+      }
+    },
+    "advisory_id": "GHSA-adv-8",
+    "package": "vuln_c",
+    "target_module": "vuln_c",
+    "target_symbol": "vuln_c.target_vuln",
+    "expected_verdict": "REACHABLE",
+    "description": "Multi-hop inter-package call path: Project -> lib_a -> lib_b -> vuln_c.",
+    "reasoning": "Unified call graph traverses cross-package edges across all transitive dependencies."
+  },
+  {
+    "name": "adv_9_monkey_patching_target_pkg",
+    "fixture_type": "inline",
+    "project_sources": {
+      "main.py": "import vuln_pkg\n\ndef run():\n    vuln_pkg.original_func = lambda: 'patched'\n\nif __name__ == '__main__':\n    run()"
+    },
+    "dep_sources": {
+      "vuln_pkg": {
+        "vuln_pkg/__init__.py": "def original_func():\n    return 'orig'"
+      }
+    },
+    "advisory_id": "GHSA-adv-9",
+    "package": "vuln_pkg",
+    "target_module": "vuln_pkg",
+    "target_symbol": "vuln_pkg.original_func",
+    "expected_verdict": "UNCERTAIN",
+    "description": "Explicit monkey patching on target package receiver.",
+    "reasoning": "NamespaceTouchAuditor Condition 0 detects monkey patching targeting vuln_pkg."
+  },
+  {
+    "name": "adv_10_non_constant_dynamic_import",
+    "fixture_type": "inline",
+    "project_sources": {
+      "main.py": "import os\n\ndef run():\n    mod = os.getenv('DYNAMIC_MOD', 'vuln_pkg')\n    __import__(mod)\n\nif __name__ == '__main__':\n    run()"
+    },
+    "dep_sources": {
+      "vuln_pkg": {
+        "vuln_pkg/__init__.py": "def some_func():\n    return 1"
+      }
+    },
+    "advisory_id": "GHSA-adv-10",
+    "package": "vuln_pkg",
+    "target_module": "vuln_pkg",
+    "target_symbol": "vuln_pkg.some_func",
+    "expected_verdict": "UNCERTAIN",
+    "description": "Non-constant dynamic import (__import__) could resolve to vuln_pkg.",
+    "reasoning": "Condition A2 flags non-constant dynamic imports; unreachability cannot be proven."
+  },
+  {
+    "name": "adv_11_dead_code_with_safe_calls",
+    "fixture_type": "inline",
+    "project_sources": {
+      "main.py": "import math\nimport vuln_pkg\n\ndef dead_helper():\n    vuln_pkg.dangerous_operation()\n\ndef run():\n    return math.sqrt(16)\n\nif __name__ == '__main__':\n    run()"
+    },
+    "dep_sources": {
+      "vuln_pkg": {
+        "vuln_pkg/__init__.py": "def dangerous_operation():\n    return 999"
+      }
+    },
+    "advisory_id": "GHSA-adv-11",
+    "package": "vuln_pkg",
+    "target_module": "vuln_pkg",
+    "target_symbol": "vuln_pkg.dangerous_operation",
+    "expected_verdict": "NOT_REACHABLE",
+    "description": "Vulnerable function referenced only in dead/uncalled helper function.",
+    "reasoning": "No path exists from main entry point; zero dynamic features touch vuln_pkg."
   }
 ]
