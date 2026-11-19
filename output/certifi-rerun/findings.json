@@ -1,0 +1,23 @@
+[
+  {
+    "advisory_id": "GHSA-6q48-6c7w-9gw2",
+    "package_name": "certifi",
+    "installed_version": "2026.2.25",
+    "verdict": "UNCERTAIN",
+    "confidence": "low",
+    "affected_symbols": [],
+    "call_path": [],
+    "uncertainty_reasons": [
+      {
+        "category": "no_affected_symbols",
+        "location": "advisory:GHSA-6q48-6c7w-9gw2",
+        "details": "No valid affected symbols remained after advisory resolution and fix-file filtering.",
+        "potential_targets": []
+      }
+    ],
+    "distribution_filename": "certifi-2026.2.25-py3-none-any.whl",
+    "distribution_tag": "py3-none-any",
+    "analysis_timestamp": "2026-11-19T11:36:38.321429+00:00",
+    "summary": "No affected symbols could be identified soundly."
+  }
+]

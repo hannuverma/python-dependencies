@@ -1,0 +1,10 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://pyreach.local/vex/20261119113638342368",
+  "author": "pyreach vulnerability reachability analyzer",
+  "role": "automated-security-tool",
+  "timestamp": "2026-11-19T11:36:38.342311+00:00",
+  "version": 1,
+  "tooling": "pyreach/0.1.0",
+  "statements": []
+}

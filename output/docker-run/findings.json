@@ -1,0 +1,23 @@
+[
+  {
+    "advisory_id": "GHSA-3f63-hfp8-52jq",
+    "package_name": "pillow",
+    "installed_version": "10.1.0",
+    "verdict": "UNCERTAIN",
+    "confidence": "high",
+    "affected_symbols": [],
+    "call_path": [],
+    "uncertainty_reasons": [
+      {
+        "category": "missing_dependency_source",
+        "location": "package:pillow",
+        "details": "Dependency 'pillow' (normalized: 'pillow') was declared in manifest/lockfile but was not fetched or registered in the call graph.",
+        "potential_targets": []
+      }
+    ],
+    "distribution_filename": null,
+    "distribution_tag": null,
+    "analysis_timestamp": "2026-11-19T11:27:15.698532+00:00",
+    "summary": "Dependency chain incomplete: required package missing, unparsed, or failed."
+  }
+]

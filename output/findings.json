@@ -1,0 +1,212 @@
+[
+  {
+    "advisory_id": "GHSA-6q48-6c7w-9gw2",
+    "package_name": "certifi",
+    "installed_version": "2026.2.25",
+    "verdict": "UNCERTAIN",
+    "confidence": "low",
+    "affected_symbols": [],
+    "call_path": [],
+    "uncertainty_reasons": [
+      {
+        "category": "no_affected_symbols",
+        "location": "advisory:GHSA-6q48-6c7w-9gw2",
+        "details": "No fix commits were found in the advisory record. This may be a data-only advisory (e.g. a CA bundle update), a supply-chain advisory (e.g. bundled OpenSSL version), or an advisory with links only to GitHub Security Advisory pages rather than code commits. Static symbol-level analysis is not applicable.",
+        "potential_targets": []
+      }
+    ],
+    "distribution_filename": "certifi-2026.2.25-py3-none-any.whl",
+    "distribution_tag": "py3-none-any",
+    "analysis_timestamp": "2026-11-19T11:57:37.034496+00:00",
+    "summary": "No fix commits found \u2014 data-only or supply-chain advisory."
+  },
+  {
+    "advisory_id": "PYSEC-2026-4320",
+    "package_name": "certifi",
+    "installed_version": "2026.2.25",
+    "verdict": "UNCERTAIN",
+    "confidence": "low",
+    "affected_symbols": [],
+    "call_path": [],
+    "uncertainty_reasons": [
+      {
+        "category": "no_affected_symbols",
+        "location": "advisory:PYSEC-2026-4320",
+        "details": "No fix commits were found in the advisory record. This may be a data-only advisory (e.g. a CA bundle update), a supply-chain advisory (e.g. bundled OpenSSL version), or an advisory with links only to GitHub Security Advisory pages rather than code commits. Static symbol-level analysis is not applicable.",
+        "potential_targets": []
+      }
+    ],
+    "distribution_filename": "certifi-2026.2.25-py3-none-any.whl",
+    "distribution_tag": "py3-none-any",
+    "analysis_timestamp": "2026-11-19T11:57:37.498012+00:00",
+    "summary": "No fix commits found \u2014 data-only or supply-chain advisory."
+  },
+  {
+    "advisory_id": "GHSA-537c-gmf6-5ccf",
+    "package_name": "cryptography",
+    "installed_version": "46.0.5",
+    "verdict": "UNCERTAIN",
+    "confidence": "low",
+    "affected_symbols": [],
+    "call_path": [],
+    "uncertainty_reasons": [
+      {
+        "category": "no_affected_symbols",
+        "location": "advisory:GHSA-537c-gmf6-5ccf",
+        "details": "No fix commits were found in the advisory record. This may be a data-only advisory (e.g. a CA bundle update), a supply-chain advisory (e.g. bundled OpenSSL version), or an advisory with links only to GitHub Security Advisory pages rather than code commits. Static symbol-level analysis is not applicable.",
+        "potential_targets": []
+      }
+    ],
+    "distribution_filename": "cryptography-46.0.5.tar.gz",
+    "distribution_tag": "sdist",
+    "analysis_timestamp": "2026-11-19T11:57:37.958226+00:00",
+    "summary": "No fix commits found \u2014 data-only or supply-chain advisory."
+  },
+  {
+    "advisory_id": "GHSA-g6cj-pr64-35w5",
+    "package_name": "cryptography",
+    "installed_version": "46.0.5",
+    "verdict": "UNCERTAIN",
+    "confidence": "high",
+    "affected_symbols": [],
+    "call_path": [],
+    "uncertainty_reasons": [
+      {
+        "category": "c_extension",
+        "location": "advisory:GHSA-g6cj-pr64-35w5",
+        "details": "The advisory fix changes native code (.c/.h/.cpp/.rs/.pyx or src/rust); static Python analysis cannot prove reachability across that boundary.",
+        "potential_targets": []
+      }
+    ],
+    "distribution_filename": "cryptography-46.0.5.tar.gz",
+    "distribution_tag": "sdist",
+    "analysis_timestamp": "2026-11-19T11:57:38.424159+00:00",
+    "summary": "Fix includes native code; reachability is capped at UNCERTAIN."
+  },
+  {
+    "advisory_id": "GHSA-jwv3-5hgf-82ww",
+    "package_name": "cryptography",
+    "installed_version": "46.0.5",
+    "verdict": "UNCERTAIN",
+    "confidence": "high",
+    "affected_symbols": [],
+    "call_path": [],
+    "uncertainty_reasons": [
+      {
+        "category": "c_extension",
+        "location": "advisory:GHSA-jwv3-5hgf-82ww",
+        "details": "The advisory fix changes native code (.c/.h/.cpp/.rs/.pyx or src/rust); static Python analysis cannot prove reachability across that boundary.",
+        "potential_targets": []
+      }
+    ],
+    "distribution_filename": "cryptography-46.0.5.tar.gz",
+    "distribution_tag": "sdist",
+    "analysis_timestamp": "2026-11-19T11:57:38.881093+00:00",
+    "summary": "Fix includes native code; reachability is capped at UNCERTAIN."
+  },
+  {
+    "advisory_id": "GHSA-m2h6-j472-rp4c",
+    "package_name": "cryptography",
+    "installed_version": "46.0.5",
+    "verdict": "UNCERTAIN",
+    "confidence": "high",
+    "affected_symbols": [],
+    "call_path": [],
+    "uncertainty_reasons": [
+      {
+        "category": "c_extension",
+        "location": "advisory:GHSA-m2h6-j472-rp4c",
+        "details": "The advisory fix changes native code (.c/.h/.cpp/.rs/.pyx or src/rust); static Python analysis cannot prove reachability across that boundary.",
+        "potential_targets": []
+      }
+    ],
+    "distribution_filename": "cryptography-46.0.5.tar.gz",
+    "distribution_tag": "sdist",
+    "analysis_timestamp": "2026-11-19T11:57:39.343651+00:00",
+    "summary": "Fix includes native code; reachability is capped at UNCERTAIN."
+  },
+  {
+    "advisory_id": "GHSA-m959-cc7f-wv43",
+    "package_name": "cryptography",
+    "installed_version": "46.0.5",
+    "verdict": "UNCERTAIN",
+    "confidence": "low",
+    "affected_symbols": [],
+    "call_path": [],
+    "uncertainty_reasons": [
+      {
+        "category": "no_affected_symbols",
+        "location": "advisory:GHSA-m959-cc7f-wv43",
+        "details": "No fix commits were found in the advisory record. This may be a data-only advisory (e.g. a CA bundle update), a supply-chain advisory (e.g. bundled OpenSSL version), or an advisory with links only to GitHub Security Advisory pages rather than code commits. Static symbol-level analysis is not applicable.",
+        "potential_targets": []
+      }
+    ],
+    "distribution_filename": "cryptography-46.0.5.tar.gz",
+    "distribution_tag": "sdist",
+    "analysis_timestamp": "2026-11-19T11:57:39.800055+00:00",
+    "summary": "No fix commits found \u2014 data-only or supply-chain advisory."
+  },
+  {
+    "advisory_id": "GHSA-p423-j2cm-9vmq",
+    "package_name": "cryptography",
+    "installed_version": "46.0.5",
+    "verdict": "UNCERTAIN",
+    "confidence": "high",
+    "affected_symbols": [],
+    "call_path": [],
+    "uncertainty_reasons": [
+      {
+        "category": "c_extension",
+        "location": "advisory:GHSA-p423-j2cm-9vmq",
+        "details": "The advisory fix changes native code (.c/.h/.cpp/.rs/.pyx or src/rust); static Python analysis cannot prove reachability across that boundary.",
+        "potential_targets": []
+      }
+    ],
+    "distribution_filename": "cryptography-46.0.5.tar.gz",
+    "distribution_tag": "sdist",
+    "analysis_timestamp": "2026-11-19T11:57:40.265722+00:00",
+    "summary": "Fix includes native code; reachability is capped at UNCERTAIN."
+  },
+  {
+    "advisory_id": "PYSEC-2026-35",
+    "package_name": "cryptography",
+    "installed_version": "46.0.5",
+    "verdict": "UNCERTAIN",
+    "confidence": "low",
+    "affected_symbols": [],
+    "call_path": [],
+    "uncertainty_reasons": [
+      {
+        "category": "no_affected_symbols",
+        "location": "advisory:PYSEC-2026-35",
+        "details": "No fix commits were found in the advisory record. This may be a data-only advisory (e.g. a CA bundle update), a supply-chain advisory (e.g. bundled OpenSSL version), or an advisory with links only to GitHub Security Advisory pages rather than code commits. Static symbol-level analysis is not applicable.",
+        "potential_targets": []
+      }
+    ],
+    "distribution_filename": "cryptography-46.0.5.tar.gz",
+    "distribution_tag": "sdist",
+    "analysis_timestamp": "2026-11-19T11:57:40.724853+00:00",
+    "summary": "No fix commits found \u2014 data-only or supply-chain advisory."
+  },
+  {
+    "advisory_id": "PYSEC-2026-3552",
+    "package_name": "cryptography",
+    "installed_version": "46.0.5",
+    "verdict": "UNCERTAIN",
+    "confidence": "high",
+    "affected_symbols": [],
+    "call_path": [],
+    "uncertainty_reasons": [
+      {
+        "category": "c_extension",
+        "location": "advisory:PYSEC-2026-3552",
+        "details": "The advisory fix changes native code (.c/.h/.cpp/.rs/.pyx or src/rust); static Python analysis cannot prove reachability across that boundary.",
+        "potential_targets": []
+      }
+    ],
+    "distribution_filename": "cryptography-46.0.5.tar.gz",
+    "distribution_tag": "sdist",
+    "analysis_timestamp": "2026-11-19T11:57:41.187048+00:00",
+    "summary": "Fix includes native code; reachability is capped at UNCERTAIN."
+  }
+]
