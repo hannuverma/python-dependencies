@@ -51,6 +51,12 @@ $$\text{CacheKey} = \text{SHA256}\Big(\text{canonicalize\_name}(pkg) \,\|\, vers
 2. **Wheel Hash Invalidation**: If an upstream package archive is re-uploaded with the same version but altered contents, the wheel SHA-256 shifts, immediately triggering a cache miss and re-download.
 3. **Analyzer Version Invalidation**: Incrementing `pyreach`'s version string (e.g. `0.1.0` -> `0.2.0`) invalidates all cached summaries instantly, preventing stale AST representations from persisting across algorithm enhancements.
 4. **Measured Performance (5-run benchmark measured via `time.perf_counter`)**:
-   - Cold download from PyPI, safe extraction, and full AST indexing of `Pillow==10.1.0` (94 Python source files): **11.293s ± 0.981s** (min: 10.257s, max: 12.707s).
-   - Subsequent analysis using cached package summary and extracted source trees: **2.407s ± 0.118s** (min: 2.283s, max: 2.575s).
-   - Measured Cache Speedup: **4.7x faster**.
+   - Existing benchmark record: cold `Pillow==10.1.0` indexing **11.293s ± 0.981s**; cached analysis **2.407s ± 0.118s**.
+   - These numbers are historical measurements from the repository benchmark and should be refreshed after analyzer changes.
+
+## (d) Soundness guards added after the initial design
+
+- An advisory with no valid affected symbols is always `UNCERTAIN (no_affected_symbols)` and never produces OpenVEX.
+- Fixes changing native source are `UNCERTAIN (c_extension)`.
+- Django discovery fails closed when settings, URL configuration, and bootstrap roots are not all identifiable.
+- Sdist namespace fallback excludes utility directories and preserves standalone modules such as `six.py`.

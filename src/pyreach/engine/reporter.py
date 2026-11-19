@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from pathlib import Path
 
 from rich.console import Console
@@ -54,6 +55,23 @@ def render_terminal_report(findings: list[Finding], console: Console | None = No
 
     con.print(table)
     con.print()
+
+    verdict_counts = Counter(f.verdict.value for f in findings)
+    reason_counts = Counter(
+        reason.category.value
+        for finding in findings
+        for reason in finding.uncertainty_reasons
+    )
+    summary_lines = [
+        f"{verdict}: {verdict_counts.get(verdict, 0)}"
+        for verdict in ("REACHABLE", "NOT_REACHABLE", "UNCERTAIN")
+    ]
+    if reason_counts:
+        summary_lines.append(
+    "Uncertainty reasons: "
+    + ", ".join(f"{reason}={count}" for reason, count in sorted(reason_counts.items()))
+        )
+    con.print(Panel("\n".join(summary_lines), title="Final Summary", border_style="cyan"))
 
     # 2. Detailed Findings Panels (Summary & Evidence)
     for f in findings:
