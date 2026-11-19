@@ -23,6 +23,7 @@ from pyreach.isolation.safe_archive import (
     extract_archive_safely,
 )
 from pyreach.isolation.sandbox import DockerSandboxRunner, SandboxConfig
+from pyreach.isolation.wheel_metadata import discover_wheel_top_level_modules
 from pyreach.models import (
     Advisory,
     AffectedSymbol,
@@ -132,6 +133,18 @@ dependencies = [
     assert pkgs[0].name == "requests"
     assert pkgs[0].version == "2.28.1"
     assert pkgs[1].name == "flask"
+
+
+def test_sdist_namespace_discovery_excludes_utility_directories(tmp_path: Path) -> None:
+    (tmp_path / "psycopg2").mkdir()
+    (tmp_path / "psycopg2" / "__init__.py").write_text("", encoding="utf-8")
+    for name in ("lib", "scripts", "setup", "tests", "docs"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "helper.py").write_text("", encoding="utf-8")
+    (tmp_path / "six.py").write_text("def add(a, b): return a + b\n", encoding="utf-8")
+
+    discovered = discover_wheel_top_level_modules(tmp_path)
+    assert discovered == {"psycopg2", "six"}
 
 
 # ---------------------------------------------------------------------------

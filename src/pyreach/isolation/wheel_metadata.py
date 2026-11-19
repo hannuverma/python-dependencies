@@ -57,11 +57,28 @@ def discover_wheel_top_level_modules(package_dir: Path) -> set[str]:
             return top_levels
 
     # 3. Fallback: inspect root directory for packages (__init__.py) or standalone modules
+    excluded_names = {
+        "tests",
+        "test",
+        "docs",
+        "doc",
+        "scripts",
+        "examples",
+        "example",
+        "vectors",
+        "benchmarks",
+        "benchmark",
+        "setup",
+        "tools",
+        "lib",
+    }
     try:
         for item in package_dir.iterdir():
             if item.name.startswith((".", "_")) and item.name != "__init__.py":
                 continue
             if item.name.endswith(".dist-info"):
+                continue
+            if item.name.lower() in excluded_names:
                 continue
             if item.is_dir():
                 if (item / "__init__.py").exists() or any(item.glob("*.py")):
